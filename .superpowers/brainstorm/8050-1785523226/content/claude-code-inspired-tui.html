@@ -1,0 +1,73 @@
+<h2>le-agent TUI · Claude Code 风格方向</h2>
+<p class="subtitle">结合你选择的“对话聚焦”方案：单列主流程、内联工具卡、就地审批、命令面板覆盖层。</p>
+
+<div class="mockup" style="max-width:980px;margin:0 auto;">
+  <div class="mockup-header">主界面线框图 · 100×34 终端</div>
+  <div class="mockup-body" style="background:#111318;color:#d7dae0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;padding:18px;min-height:610px;">
+    <div style="display:flex;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid #343841;">
+      <div><strong style="color:#d19a66;">le-agent</strong> <span style="color:#707784;">v0.1 · /workspace/le-agent</span></div>
+      <div style="color:#8b93a1;">anthropic / claude-sonnet · confirm</div>
+    </div>
+
+    <div style="padding:20px 6px 10px;line-height:1.55;">
+      <div style="display:grid;grid-template-columns:22px 1fr;gap:8px;margin-bottom:20px;">
+        <div style="color:#d19a66;font-size:17px;">›</div>
+        <div>检查配置加载逻辑，找出测试失败的原因并修复。</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:22px 1fr;gap:8px;">
+        <div style="color:#b07bd5;font-size:16px;">◆</div>
+        <div>
+          <div>我先定位配置入口与失败测试。</div>
+
+          <div style="margin:14px 0 8px;color:#aeb5c0;">
+            <span style="color:#7cc7a0;">●</span> <strong>Search</strong>
+            <span style="color:#747c89;">pattern: load_config · path: src, tests</span>
+          </div>
+          <div style="border-left:2px solid #3a3f49;padding:5px 10px;color:#858d9a;">
+            Found 6 matches in 4 files <span style="color:#646b76;">· ctrl+o expand</span>
+          </div>
+
+          <div style="margin:16px 0 8px;color:#aeb5c0;">
+            <span style="color:#7cc7a0;">●</span> <strong>Read</strong>
+            <span style="color:#747c89;">src/le_agent/config.py</span>
+          </div>
+
+          <div style="margin:16px 0 8px;">问题是项目配置错误地覆盖了环境变量。我会先添加回归测试，再修改优先级。</div>
+
+          <div style="margin-top:14px;border:1px solid #765f3c;border-radius:5px;background:#1b1813;padding:12px 14px;">
+            <div style="color:#e6b66b;margin-bottom:8px;"><strong>Allow Edit?</strong> tests/test_config.py, src/le_agent/config.py</div>
+            <div style="color:#c7cbd1;">❯ 1. Yes</div>
+            <div style="color:#c7cbd1;">&nbsp; 2. Yes, allow edits in this workspace</div>
+            <div style="color:#c7cbd1;">&nbsp; 3. No, tell le-agent what to do differently</div>
+            <div style="color:#6f7682;margin-top:7px;">Enter confirm · Esc deny</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:68px;border:1px solid #555b66;border-radius:7px;padding:12px 14px;min-height:46px;color:#747c89;">
+      <span style="color:#d19a66;">›</span> 输入消息，或输入 / 查看命令…
+    </div>
+    <div style="display:flex;justify-content:space-between;padding-top:9px;color:#69717e;font-size:12px;">
+      <div>shift+tab 切换权限 · esc 中止 · ctrl+r 历史</div>
+      <div>31.2k tokens · $0.08 · main</div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="max-width:980px;margin:18px auto 0;">
+  <h3>覆盖层而非常驻侧栏</h3>
+  <p>按 <code>Ctrl+T</code> 打开会话树，<code>/model</code> 打开模型选择，<code>/skills</code> 查看技能，<code>/compact</code> 手动压缩；关闭后回到同一条对话流。</p>
+</div>
+
+<div class="options" style="max-width:980px;margin:14px auto 0;">
+  <div class="option" data-choice="approve_tui" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>采用这个方向</h3><p>后续按此信息层级设计组件、快捷键和状态流。</p></div>
+  </div>
+  <div class="option" data-choice="revise_tui" onclick="toggleSelect(this)">
+    <div class="letter">↺</div>
+    <div class="content"><h3>需要调整</h3><p>回到对话说明想改的布局、信息或交互。</p></div>
+  </div>
+</div>

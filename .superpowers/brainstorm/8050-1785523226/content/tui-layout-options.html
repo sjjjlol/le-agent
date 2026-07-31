@@ -1,0 +1,86 @@
+<h2>le-agent 全屏 TUI：选择主界面布局</h2>
+<p class="subtitle">三种方案都保留流式消息、工具执行、审批、会话树与模型状态；区别在于默认信息密度。</p>
+
+<div class="cards" style="grid-template-columns: repeat(3, minmax(280px, 1fr)); align-items: stretch;">
+  <div class="card" data-choice="focus" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:12px;background:#10151c;color:#d8dee9;font-family:ui-monospace,monospace;font-size:11px;min-height:360px;">
+      <div style="display:flex;justify-content:space-between;color:#8fbcbb;border-bottom:1px solid #3b4252;padding-bottom:7px;">
+        <span>le-agent · main</span><span>claude-sonnet · 42%</span>
+      </div>
+      <div style="padding:12px 4px;line-height:1.5;">
+        <div style="color:#88c0d0;">YOU</div>
+        <div>修复配置加载的回归问题</div>
+        <div style="margin-top:12px;color:#a3be8c;">LE</div>
+        <div>我先检查入口和相关测试。</div>
+        <div style="margin:10px 0;padding:8px;border-left:2px solid #ebcb8b;background:#171e28;">
+          <div style="color:#ebcb8b;">● bash</div>
+          <div>rg "load_config" src tests</div>
+          <div style="color:#6b7485;">completed · 14 lines</div>
+        </div>
+        <div>问题在环境变量优先级。我会先补回归测试。</div>
+      </div>
+      <div style="position:relative;margin-top:70px;border:1px solid #4c566a;border-radius:4px;padding:9px;color:#6b7485;">输入消息…  /help</div>
+      <div style="display:flex;justify-content:space-between;margin-top:7px;color:#6b7485;"><span>workspace · confirm</span><span>esc stop · ctrl+t tree</span></div>
+    </div>
+    <div class="card-body">
+      <h3>A · 对话聚焦</h3>
+      <p>单列主界面，工具卡片内嵌；会话树、详情和审批按需弹出。最接近 pi 的克制体验。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="inspector" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:12px;background:#10151c;color:#d8dee9;font-family:ui-monospace,monospace;font-size:11px;min-height:360px;">
+      <div style="display:flex;justify-content:space-between;color:#8fbcbb;border-bottom:1px solid #3b4252;padding-bottom:7px;">
+        <span>le-agent · main</span><span>$0.08 · 42%</span>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr;min-height:285px;">
+        <div style="padding:12px 8px 8px 2px;border-right:1px solid #3b4252;line-height:1.5;">
+          <div style="color:#88c0d0;">YOU</div><div>修复配置加载的回归问题</div>
+          <div style="margin-top:12px;color:#a3be8c;">LE</div><div>我先检查入口和相关测试。</div>
+          <div style="margin-top:10px;padding:8px;background:#171e28;"><span style="color:#ebcb8b;">● bash</span><br>rg "load_config" src tests</div>
+        </div>
+        <div style="padding:12px 4px 8px 10px;color:#aab2c0;">
+          <div style="color:#81a1c1;">RUN</div>
+          <div>turn 3 · streaming</div>
+          <div style="margin-top:12px;color:#81a1c1;">TOOLS</div>
+          <div>✓ read  18ms</div><div>✓ bash  91ms</div><div style="color:#ebcb8b;">◌ edit  approval</div>
+          <div style="margin-top:12px;color:#81a1c1;">SESSION</div>
+          <div>● root</div><div>&nbsp;└─ current</div>
+          <div style="margin-top:12px;color:#81a1c1;">USAGE</div><div>31.2k / 74.0k</div>
+        </div>
+      </div>
+      <div style="border:1px solid #4c566a;border-radius:4px;padding:9px;color:#6b7485;">输入消息…</div>
+    </div>
+    <div class="card-body">
+      <h3>B · 对话 + 检查器</h3>
+      <p>右侧常驻运行状态、工具轨迹和会话树。演示信息丰富，但窄终端会退化为单列。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="console" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:12px;background:#10151c;color:#d8dee9;font-family:ui-monospace,monospace;font-size:11px;min-height:360px;">
+      <div style="display:flex;justify-content:space-between;color:#8fbcbb;border-bottom:1px solid #3b4252;padding-bottom:7px;">
+        <span>le-agent studio</span><span>session 01J…</span>
+      </div>
+      <div style="display:grid;grid-template-columns:86px 1fr 115px;min-height:250px;">
+        <div style="padding:10px 4px;border-right:1px solid #3b4252;color:#8792a5;">
+          <div style="color:#81a1c1;">SESSIONS</div><div>● current</div><div>  branch-a</div><div>  yesterday</div>
+        </div>
+        <div style="padding:10px;line-height:1.45;">
+          <span style="color:#88c0d0;">YOU</span><br>修复配置加载<br><br><span style="color:#a3be8c;">LE</span><br>我先检查入口。<div style="margin-top:10px;padding:7px;background:#171e28;color:#ebcb8b;">● bash · running</div>
+        </div>
+        <div style="padding:10px 5px;border-left:1px solid #3b4252;color:#8792a5;">
+          <div style="color:#81a1c1;">EVENTS</div><div>turn_start</div><div>text_delta ×28</div><div>tool_start</div><div style="margin-top:10px;color:#81a1c1;">FILES</div><div>M config.py</div>
+        </div>
+      </div>
+      <div style="border-top:1px solid #3b4252;padding:8px;color:#bf616a;">APPROVAL · edit src/config.py &nbsp; [y] allow [n] deny [a] always</div>
+      <div style="border:1px solid #4c566a;border-radius:4px;padding:9px;color:#6b7485;">输入消息…</div>
+    </div>
+    <div class="card-body">
+      <h3>C · 三栏工作台</h3>
+      <p>把会话、对话、事件与文件变更全部常驻。像调试控制台，展示性强，但复杂度和视觉负担最高。</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:18px;">点击一个方案，然后回到对话里告诉我：你选哪一个，以及希望保留另一个方案中的哪些元素。</p>

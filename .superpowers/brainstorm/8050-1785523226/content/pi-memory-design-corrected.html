@@ -1,0 +1,111 @@
+<h2>le-agent Memory 设计 · 按 pi 语义修正</h2>
+<p class="subtitle">Memory 不是一个向量库模块，而是“追加式 Session Tree → 当前分支投影 → 模型 Context”的完整机制。</p>
+
+<div style="max-width:1120px;margin:0 auto;display:grid;grid-template-columns:1fr 64px 1.15fr 64px 1fr;gap:8px;align-items:stretch;">
+  <div style="padding:18px;border:1px solid #765f88;border-radius:8px;background:#18141d;">
+    <div class="label">EPHEMERAL</div>
+    <h3 style="color:#c39adf;">AgentState</h3>
+    <p>当前运行的内存态</p>
+    <div style="font-family:ui-monospace,monospace;font-size:12px;line-height:1.8;color:#bbc0ca;">
+      system_prompt<br>model / thinking_level<br>tools<br>messages<br>streaming_message<br>pending_tool_calls
+    </div>
+    <p class="subtitle">进程退出后可由 Session 重建。</p>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:center;color:#7f8997;text-align:center;">事件<br>⇄</div>
+  <div style="padding:18px;border:2px solid #6d8a5b;border-radius:8px;background:#141a13;">
+    <div class="label">SOURCE OF TRUTH</div>
+    <h3 style="color:#9fc582;">Session</h3>
+    <p>单调追加的持久状态树，历史从不原地修改或删除。</p>
+    <div style="font-family:ui-monospace,monospace;font-size:12px;line-height:1.75;color:#bbc0ca;">
+      SessionRepository<br>
+      ├─ MemorySessionStore<br>
+      └─ JsonlSessionStore<br><br>
+      SessionEntry { id, parent_id,<br>
+      &nbsp; timestamp, type, payload }
+    </div>
+    <p class="subtitle">消息、模型、思考级别、工具集、压缩、标签和叶子移动都写成 entry。</p>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:center;color:#7f8997;text-align:center;">投影<br>→</div>
+  <div style="padding:18px;border:1px solid #537795;border-radius:8px;background:#131820;">
+    <div class="label">DERIVED</div>
+    <h3 style="color:#82b7df;">Provider Context</h3>
+    <p>每次模型请求前重新构造</p>
+    <div style="font-family:ui-monospace,monospace;font-size:12px;line-height:1.8;color:#bbc0ca;">
+      current leaf<br>
+      → parent chain<br>
+      → compaction transform<br>
+      → AgentMessage[]<br>
+      → convert_to_llm()<br>
+      → ProviderMessage[]
+    </div>
+    <p class="subtitle">不是完整历史，也不是第二份真源。</p>
+  </div>
+</div>
+
+<div class="split" style="max-width:1120px;margin:24px auto 0;align-items:stretch;">
+  <div class="mockup">
+    <div class="mockup-header">追加式树：分支不复制历史</div>
+    <div class="mockup-body" style="background:#10141a;padding:20px;font-family:ui-monospace,monospace;font-size:12px;line-height:1.8;color:#c1c6cf;">
+      <div><span style="color:#82b7df;">m1</span> user: 修复 config</div>
+      <div>&nbsp;└─ <span style="color:#c39adf;">m2</span> assistant: 先检查</div>
+      <div>&nbsp;&nbsp;&nbsp;├─ <span style="color:#d4aa6e;">m3</span> toolResult: ...</div>
+      <div>&nbsp;&nbsp;&nbsp;│&nbsp;└─ <span style="color:#9fc582;">m4</span> assistant: branch A</div>
+      <div>&nbsp;&nbsp;&nbsp;└─ <span style="color:#d4aa6e;">m5</span> user: 换一种方案</div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ <span style="color:#9fc582;">m6</span> assistant: branch B <span style="color:#e6b66b;">← leaf</span></div>
+      <div style="margin-top:14px;padding-top:10px;border-top:1px solid #343b46;color:#7e8794;">
+        切回 m4：追加 leaf{ target_id: "m4" }<br>
+        下一条消息的 parent_id = "m4"
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">Compaction：替换 Context，不删除历史</div>
+    <div class="mockup-body" style="background:#10141a;padding:20px;font-family:ui-monospace,monospace;font-size:12px;line-height:1.72;color:#c1c6cf;">
+      <div style="color:#7e8794;">原始分支</div>
+      <div>[old messages …] [recent tail …]</div>
+      <div style="text-align:center;color:#7e8794;font-size:18px;">↓ threshold exceeded</div>
+      <div style="border:1px solid #6d8a5b;border-radius:5px;padding:10px;">
+        <span style="color:#9fc582;">compaction entry</span><br>
+        summary<br>
+        first_kept_entry_id<br>
+        retained_tail<br>
+        tokens_before / usage<br>
+        file operation details
+      </div>
+      <div style="text-align:center;color:#7e8794;font-size:18px;">↓ build_context()</div>
+      <div><span style="color:#82b7df;">summary message</span> + retained_tail + later entries</div>
+      <div style="margin-top:9px;color:#7e8794;">再次压缩时，把 previous_summary 与新增历史一起更新。</div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="max-width:1120px;margin:22px auto 0;">
+  <h3>首版必须实现的 Session Entry</h3>
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;font-family:ui-monospace,monospace;font-size:12px;">
+    <div style="padding:10px;border:1px solid #424a55;border-radius:5px;">message</div>
+    <div style="padding:10px;border:1px solid #424a55;border-radius:5px;">model_change</div>
+    <div style="padding:10px;border:1px solid #424a55;border-radius:5px;">thinking_change</div>
+    <div style="padding:10px;border:1px solid #424a55;border-radius:5px;">active_tools_change</div>
+    <div style="padding:10px;border:1px solid #424a55;border-radius:5px;">compaction</div>
+    <div style="padding:10px;border:1px solid #424a55;border-radius:5px;">branch_summary</div>
+    <div style="padding:10px;border:1px solid #424a55;border-radius:5px;">leaf</div>
+    <div style="padding:10px;border:1px solid #424a55;border-radius:5px;">label</div>
+    <div style="padding:10px;border:1px solid #424a55;border-radius:5px;">session_info</div>
+    <div style="padding:10px;border:1px solid #424a55;border-radius:5px;">custom (预留)</div>
+  </div>
+</div>
+
+<div style="max-width:1120px;margin:18px auto;padding:14px;border-left:3px solid #d39a5a;background:#1b1712;">
+  <strong style="color:#e0ad70;">明确不做：</strong>
+  <span style="color:#c6c9cf;">向量数据库、embedding、跨会话语义召回、自动用户画像。它们不是 pi 这套 memory 的核心原理。</span>
+</div>
+
+<div class="options" style="max-width:1120px;margin:18px auto 0;">
+  <div class="option" data-choice="approve_memory" onclick="toggleSelect(this)">
+    <div class="letter">✓</div><div class="content"><h3>确认 Memory 设计</h3><p>按追加式 Session Tree、分支投影和增量压缩实现。</p></div>
+  </div>
+  <div class="option" data-choice="revise_memory" onclick="toggleSelect(this)">
+    <div class="letter">↺</div><div class="content"><h3>仍需调整</h3><p>回到对话指出与你理解的 pi memory 不一致之处。</p></div>
+  </div>
+</div>
