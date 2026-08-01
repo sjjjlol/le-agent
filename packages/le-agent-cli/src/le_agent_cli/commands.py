@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 CommandSource = Literal["builtin", "skill", "extension"]
+TranscriptEffect = Literal["preserve", "clear", "reload"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,9 +23,17 @@ class CommandContext:
 
 
 @dataclass(frozen=True, slots=True)
+class CommandLink:
+    label: str
+    target: str
+
+
+@dataclass(frozen=True, slots=True)
 class CommandResult:
     message: str | None = None
     exit_requested: bool = False
+    transcript_effect: TranscriptEffect = "preserve"
+    links: tuple[CommandLink, ...] = ()
 
 
 CommandHandler = Callable[[str, CommandContext], Awaitable[CommandResult]]
@@ -186,22 +195,31 @@ def create_builtin_registry() -> CommandRegistry:
 
     async def new_command(_argument: str, context: CommandContext) -> CommandResult:
         await context.runtime.new_session()
-        return CommandResult(message="已创建新会话")
+        return CommandResult(message="已创建新会话", transcript_effect="clear")
+
+    async def clear_command(_argument: str, _context: CommandContext) -> CommandResult:
+        return CommandResult(transcript_effect="clear")
 
     async def resume_command(argument: str, context: CommandContext) -> CommandResult:
         selected = argument or await _invoke_ui(context, "select_session")
         if not selected:
             return CommandResult(message="已取消恢复会话")
         await context.runtime.resume(str(selected))
-        return CommandResult(message=f"已恢复会话：{selected}")
+        return CommandResult(message=f"已恢复会话：{selected}", transcript_effect="reload")
 
     async def tree_command(_argument: str, context: CommandContext) -> CommandResult:
-        message = await _invoke_ui(context, "show_tree")
-        return CommandResult(message=message)
+        result = await _invoke_ui(context, "show_tree")
+        if isinstance(result, CommandResult):
+            return result
+        effect: TranscriptEffect = "preserve" if str(result).startswith("已取消") else "reload"
+        return CommandResult(message=str(result), transcript_effect=effect)
 
     async def compact_command(argument: str, context: CommandContext) -> CommandResult:
         changed = await context.runtime.compact(argument or None)
-        return CommandResult(message="上下文压缩完成" if changed else "当前上下文无需压缩")
+        return CommandResult(
+            message="上下文压缩完成" if changed else "当前上下文无需压缩",
+            transcript_effect="reload" if changed else "preserve",
+        )
 
     async def skills_command(_argument: str, context: CommandContext) -> CommandResult:
         skills = context.runtime.bundle.skills
@@ -255,7 +273,8 @@ def create_builtin_registry() -> CommandRegistry:
         CommandSpec("help", "显示命令帮助", handler=help_command),
         CommandSpec("model", "选择或切换模型", "[name]", handler=model_command),
         CommandSpec("settings", "修改运行设置", handler=settings_command),
-        CommandSpec("new", "创建新会话", aliases=("clear",), handler=new_command),
+        CommandSpec("new", "创建新会话", handler=new_command),
+        CommandSpec("clear", "清空当前界面", handler=clear_command),
         CommandSpec("resume", "恢复历史会话", "[session-id]", availability=_persistent_session, handler=resume_command),
         CommandSpec("tree", "浏览并回溯会话树", availability=_persistent_session, handler=tree_command),
         CommandSpec("compact", "压缩当前上下文", "[instructions]", handler=compact_command),

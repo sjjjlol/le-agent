@@ -152,6 +152,60 @@ async def test_transcript_coalesces_stream_deltas_and_updates_tool_card_in_place
 
 
 @pytest.mark.asyncio
+async def test_clear_only_removes_transcript_without_changing_session_context() -> None:
+    bundle = await _bundle()
+    await bundle.session.append_message(UserMessage(content=[TextContent(text="kept context")]))
+    app = LeAgentApp(bundle)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(Transcript)
+        assert any("kept context" in str(widget.render()) for widget in transcript.query(".user-message"))
+        session_id = app.runtime.bundle.session.id
+        leaf_id = app.runtime.bundle.session.leaf_id
+        entries = await app.runtime.bundle.session.entries()
+
+        await app._execute_command("/clear")
+        await pilot.pause()
+
+        assert len(transcript.query(".message")) == 0
+        assert app.runtime.bundle.session.id == session_id
+        assert app.runtime.bundle.session.leaf_id == leaf_id
+        assert await app.runtime.bundle.session.entries() == entries
+        assert [message.role for message in await app.runtime.bundle.session.build_context_messages()] == ["user"]
+
+
+@pytest.mark.asyncio
+async def test_command_transcript_effects_clear_or_reload_projected_context() -> None:
+    bundle = await _bundle()
+    await bundle.session.append_message(UserMessage(content=[TextContent(text="restored branch")]))
+    registry = CommandRegistry()
+
+    async def clear_command(_argument, _context):
+        from le_agent_cli.commands import CommandResult
+
+        return CommandResult(transcript_effect="clear")
+
+    async def reload_command(_argument, _context):
+        from le_agent_cli.commands import CommandResult
+
+        return CommandResult(transcript_effect="reload")
+
+    registry.register(CommandSpec("clear-test", "clear", handler=clear_command))
+    registry.register(CommandSpec("reload-test", "reload", handler=reload_command))
+    app = LeAgentApp(bundle, registry=registry)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(Transcript)
+        await transcript.append_message("temporary", "system")
+        await app._execute_command("/clear-test")
+        assert len(transcript.query(".message")) == 0
+
+        await app._execute_command("/reload-test")
+        await pilot.pause()
+        assert any("restored branch" in str(widget.render()) for widget in transcript.query(".user-message"))
+
+
+@pytest.mark.asyncio
 async def test_status_context_uses_latest_provider_usage_plus_trailing_messages() -> None:
     bundle = await _bundle()
     agent = await bundle.harness.restore()

@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
-from le_agent_ai.models import AssistantMessage, StreamEvent, ThinkingContent, ToolResultMessage
+from le_agent_ai.models import (
+    AgentMessage,
+    AssistantMessage,
+    BranchSummaryMessage,
+    CompactionSummaryMessage,
+    CustomMessage,
+    StreamEvent,
+    ThinkingContent,
+    ToolCallContent,
+    ToolResultMessage,
+    UserMessage,
+)
 from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.timer import Timer
@@ -107,6 +118,41 @@ class Transcript(VerticalScroll):
         row = Static(text, classes=f"message {kind}-message")
         await self.mount(row)
         self.scroll_end(animate=False)
+
+    async def clear_messages(self) -> None:
+        if self._flush_timer is not None:
+            self._flush_timer.stop()
+        self._flush_timer = None
+        self._pending_events.clear()
+        self.current_assistant = None
+        self.tool_cards.clear()
+        await self.remove_children()
+
+    async def reload_from_context(self, messages: list[AgentMessage]) -> None:
+        await self.clear_messages()
+        for message in messages:
+            if isinstance(message, UserMessage):
+                text = "".join(block.text for block in message.content)
+                await self.append_message(f"❯ {text}", "user")
+            elif isinstance(message, AssistantMessage):
+                has_visible_content = bool(message.text or message.error_message) or any(
+                    isinstance(block, ThinkingContent) for block in message.content
+                )
+                if has_visible_content:
+                    await self.finish_assistant(message)
+                for block in message.content:
+                    if isinstance(block, ToolCallContent):
+                        await self.start_tool(block.id, block.name)
+            elif isinstance(message, ToolResultMessage):
+                if message.tool_call_id not in self.tool_cards:
+                    await self.start_tool(message.tool_call_id, message.tool_name)
+                self.finish_tool(message.tool_call_id, message)
+            elif isinstance(message, CompactionSummaryMessage):
+                await self.append_message(f"上下文摘要\n{message.summary}", "system")
+            elif isinstance(message, BranchSummaryMessage):
+                await self.append_message(f"分支摘要\n{message.summary}", "system")
+            elif isinstance(message, CustomMessage) and message.display:
+                await self.append_message(message.content, "system")
 
     async def start_assistant(self) -> AssistantMessageView:
         if self.current_assistant is None:

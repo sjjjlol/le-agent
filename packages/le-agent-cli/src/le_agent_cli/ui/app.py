@@ -85,6 +85,7 @@ class LeAgentApp(App[None]):
         self.runtime.subscribe(self._render_event)
         await self.runtime.start()
         self.runtime.bundle.policy.approval = self._approve
+        await self._reload_transcript()
         self.query_one(Composer).focus()
         self._refresh_status()
         if self.initial_prompt:
@@ -186,12 +187,20 @@ class LeAgentApp(App[None]):
                     },
                 ),
             )
+            if result.transcript_effect == "clear":
+                await transcript.clear_messages()
+            elif result.transcript_effect == "reload":
+                await self._reload_transcript()
             if result.message:
                 await transcript.append_message(result.message, "system")
             if result.exit_requested:
                 self.exit()
         except (CommandError, RuntimeError) as error:
             await transcript.append_message(str(error), "error")
+
+    async def _reload_transcript(self) -> None:
+        messages = await self.runtime.bundle.session.build_context_messages()
+        await self.query_one(Transcript).reload_from_context(messages)
 
     async def _select_model(self, names: tuple[str, ...], current: str) -> str | None:
         items = [SelectorItem(name, name, "当前" if name == current else "") for name in names]

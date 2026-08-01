@@ -60,11 +60,12 @@ async def test_unavailable_command_reports_its_reason() -> None:
         await registry.execute("/tree", CommandContext())
 
 
-def test_builtin_registry_contains_v2_command_set_and_hidden_compatibility_aliases() -> None:
+def test_builtin_registry_contains_clear_as_an_independent_visible_command() -> None:
     registry = create_builtin_registry()
 
     assert {command.name for command in registry.suggest()} == {
         "compact",
+        "clear",
         "help",
         "hotkeys",
         "model",
@@ -78,9 +79,7 @@ def test_builtin_registry_contains_v2_command_set_and_hidden_compatibility_alias
         "skills",
         "tree",
     }
-    assert registry.resolve("status").name == "session"
-    assert registry.resolve("clear").name == "new"
-    assert "clear" not in {command.name for command in registry.suggest()}
+    assert registry.resolve("clear").name == "clear"
 
 
 @pytest.mark.asyncio
@@ -183,9 +182,18 @@ async def test_remaining_builtin_commands_execute_through_one_context() -> None:
 
     assert "可用命令" in (await registry.execute("/help", context)).message
     assert (await registry.execute("/settings", context)).message == "已取消设置修改"
-    assert (await registry.execute("/new", context)).message == "已创建新会话"
-    assert (await registry.execute("/resume saved", context)).message == "已恢复会话：saved"
-    assert (await registry.execute("/tree", context)).message == "已回溯"
+    new_result = await registry.execute("/new", context)
+    assert new_result.message == "已创建新会话"
+    assert new_result.transcript_effect == "clear"
+    clear_result = await registry.execute("/clear", context)
+    assert clear_result.message is None
+    assert clear_result.transcript_effect == "clear"
+    resume_result = await registry.execute("/resume saved", context)
+    assert resume_result.message == "已恢复会话：saved"
+    assert resume_result.transcript_effect == "reload"
+    tree_result = await registry.execute("/tree", context)
+    assert tree_result.message == "已回溯"
+    assert tree_result.transcript_effect == "reload"
     assert "Review code" in (await registry.execute("/skills", context)).message
     assert (await registry.execute("/skill review focus", context)).message is None
     assert "session-123" in (await registry.execute("/session", context)).message
