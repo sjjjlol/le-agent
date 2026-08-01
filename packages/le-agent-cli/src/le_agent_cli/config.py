@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -102,13 +103,22 @@ def _load(path: Path) -> dict[str, Any]:
         return tomllib.load(handle)
 
 
+def _api_key_env(provider: str, value: Any) -> str | None:
+    if value is None:
+        return None
+    name = str(value)
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is None:
+        raise ValueError(f"providers.{provider}.api_key_env 必须是环境变量名称，不能填写密钥")
+    return name
+
+
 def load_config(*, user_path: Path, project_path: Path) -> AppConfig:
     data = _merge(_BUILTIN_CONFIG, _merge(_load(user_path), _load(project_path)))
     providers = {
         name: ProviderConfig(
             kind=str(value.get("kind", name)),
             base_url=value.get("base_url"),
-            api_key_env=value.get("api_key_env"),
+            api_key_env=_api_key_env(name, value.get("api_key_env")),
         )
         for name, value in data.get("providers", {}).items()
     }
@@ -167,6 +177,6 @@ def resolve_model_name(config: AppConfig, selector: str) -> str:
 def api_key_for(config: AppConfig, provider: str) -> str | None:
     provider_config = config.providers.get(provider)
     if provider_config and provider_config.api_key_env:
-        return os.environ.get(provider_config.api_key_env)
+        return os.environ.get(_api_key_env(provider, provider_config.api_key_env) or "")
     defaults = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
     return os.environ.get(defaults.get(provider, ""))

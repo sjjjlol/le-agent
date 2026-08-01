@@ -63,3 +63,22 @@ def test_resolve_model_name_accepts_alias_unique_id_and_provider_id_and_rejects_
     with pytest.raises(ValueError, match="不明确"):
         resolve_model_name(config, "shared-id")
     assert resolve_model_name(config, "proxy/gpt-5.4-mini") == "mini-via-proxy"
+
+
+def test_provider_api_key_env_rejects_literal_secrets_without_echoing_them(tmp_path: Path) -> None:
+    project = tmp_path / "project.toml"
+    literal_secret = "sk-proj-sensitive-value"
+    project.write_text(
+        (
+            "[providers.openai]\n"
+            "kind = 'openai'\n"
+            f"api_key_env = '{literal_secret}'\n"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as captured:
+        load_config(user_path=tmp_path / "missing.toml", project_path=project)
+
+    assert "api_key_env 必须是环境变量名称" in str(captured.value)
+    assert literal_secret not in str(captured.value)
