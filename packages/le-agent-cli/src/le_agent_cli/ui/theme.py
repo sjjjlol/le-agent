@@ -60,4 +60,27 @@ Screen {
     border: thick #ebcb8b;
     background: #17202a;
 }
+
+#tree-dialog {
+    width: 94%;
+    height: 90%;
+    padding: 1 2;
+    border: thick #5e81ac;
+    background: #101419;
+}
+
+#tree-title { height: 1; color: #88c0d0; text-style: bold; }
+#tree-search { height: 3; margin-top: 1; }
+#tree-filter { height: 1; color: #8f9baa; }
+#tree-content { height: 1fr; }
+#tree-options { width: 3fr; border: none; }
+#tree-preview { width: 2fr; padding: 1 2; border-left: solid #2d3642; color: #d8dee9; }
+
+#tree-choice-dialog, #label-dialog {
+    width: 60;
+    height: auto;
+    padding: 1 2;
+    border: thick #5e81ac;
+    background: #17202a;
+}
 """

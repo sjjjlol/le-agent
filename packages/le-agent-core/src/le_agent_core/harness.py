@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from .agent import Agent, AgentState
 from .compaction import CompactionSettings, Summarizer, compact_session, estimate_context_tokens, should_compact
 from .loop import AgentEvent, AgentLoopConfig, AgentTool
 from .session import Session
+
+
+@dataclass(frozen=True, slots=True)
+class TreeNavigationResult:
+    old_leaf_id: str
+    new_leaf_id: str
+    common_ancestor_id: str | None
+    summary_entry_id: str | None = None
 
 
 class AgentHarness:
@@ -61,6 +70,52 @@ class AgentHarness:
         if summary and old_leaf:
             await self.session.append_branch_summary(summary, old_leaf)
         self.agent = None
+
+    async def navigate_tree(
+        self,
+        entry_id: str,
+        *,
+        summarize: bool = False,
+        instructions: str | None = None,
+        summarizer: Summarizer | None = None,
+    ) -> TreeNavigationResult:
+        """Move to a tree node, optionally preserving the abandoned branch as a child summary.
+
+        Summary generation happens before the pointer is changed. A provider failure therefore
+        leaves both the append-only history and the current leaf untouched.
+        """
+        old_leaf = await self.session.leaf_id()
+        if old_leaf is None:
+            raise RuntimeError("cannot navigate an empty session")
+        await self.session.get_entry(entry_id)
+        divergence = await self.session.branch_divergence(old_leaf, entry_id)
+        if old_leaf == entry_id:
+            return TreeNavigationResult(old_leaf, old_leaf, divergence.common_ancestor_id)
+
+        summary: str | None = None
+        if summarize and divergence.abandoned_entries:
+            active_summarizer = summarizer or self.summarizer
+            if active_summarizer is None:
+                raise RuntimeError("a summarizer is required for summarized navigation")
+            messages = await self.session.messages_for_entries(divergence.abandoned_entries)
+            summary = await active_summarizer(messages, instructions)
+
+        await self.session.move_to(entry_id)
+        summary_entry_id = None
+        if summary:
+            try:
+                summary_entry_id = await self.session.append_branch_summary(summary, old_leaf)
+            except Exception:
+                await self.session.move_to(old_leaf)
+                raise
+        self.agent = None
+        new_leaf_id = summary_entry_id or entry_id
+        return TreeNavigationResult(
+            old_leaf_id=old_leaf,
+            new_leaf_id=new_leaf_id,
+            common_ancestor_id=divergence.common_ancestor_id,
+            summary_entry_id=summary_entry_id,
+        )
 
     async def _persist_message(self, event: AgentEvent) -> None:
         if event.type == "message_end" and event.message is not None:

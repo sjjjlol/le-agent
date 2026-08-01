@@ -337,6 +337,26 @@ class Session:
                 context.append(BranchSummaryMessage(summary=entry.payload["summary"], from_id=entry.payload["from_id"]))
         return context
 
+    async def messages_for_entries(self, entries: tuple[SessionEntry, ...]) -> list[AgentMessage]:
+        """Project complete message-like entries for an abandoned branch summary."""
+        messages: list[AgentMessage] = []
+        for entry in entries:
+            if entry.type == "message":
+                messages.append(_message_from_dict(entry.payload["message"]))
+            elif entry.type == "branch_summary":
+                messages.append(
+                    BranchSummaryMessage(summary=entry.payload["summary"], from_id=entry.payload["from_id"])
+                )
+            elif entry.type == "compaction":
+                messages.append(
+                    CompactionSummaryMessage(
+                        summary=str(entry.payload["summary"]),
+                        tokens_before=int(entry.payload["tokens_before"]),
+                    )
+                )
+                messages.extend(_message_from_dict(item) for item in entry.payload.get("retained_tail", []))
+        return messages
+
     async def entry_id_for_message(self, target: AgentMessage) -> str | None:
         """Return the current-branch entry that stores this exact message payload."""
         target_data = _message_to_dict(target)
