@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from le_agent_core.loop import AgentEvent
+from le_agent_core.session import Session
 
 from .app import AppBundle
 
@@ -16,6 +17,7 @@ RuntimeListener = Callable[[AgentEvent], Awaitable[None] | None]
 class RuntimeRequest:
     model_name: str | None = None
     resume: str | None = None
+    session: Session | None = None
 
 
 RuntimeFactory = Callable[[RuntimeRequest], Awaitable[AppBundle]]
@@ -61,13 +63,26 @@ class RuntimeController:
             self.bundle.harness.agent.abort()
 
     async def switch_model(self, model_name: str) -> None:
-        await self._replace(RuntimeRequest(model_name=model_name, resume=self.bundle.session.id))
+        await self._replace(RuntimeRequest(model_name=model_name, session=self.bundle.session))
+        model = self.bundle.harness.config.model
+        await self.bundle.session.append_model_change(model.provider, model.id)
 
     async def new_session(self) -> None:
         await self._replace(RuntimeRequest(model_name=self.bundle.model_name))
 
     async def resume(self, identifier: str) -> None:
         await self._replace(RuntimeRequest(model_name=self.bundle.model_name, resume=identifier))
+
+    async def reload_context(self) -> None:
+        """Rebuild AgentState after compaction or pointer navigation and rebind event forwarding."""
+        if self.bundle.harness.agent:
+            await self.bundle.harness.agent.wait_for_idle()
+        if self._agent_unsubscribe:
+            self._agent_unsubscribe()
+        self.bundle.harness.agent = None
+        self._started = False
+        self._agent_unsubscribe = None
+        await self.start()
 
     async def _replace(self, request: RuntimeRequest) -> None:
         if self.bundle.harness.agent:

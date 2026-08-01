@@ -9,15 +9,18 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static, TextArea
+from textual.worker import Worker
 
-from ..app import AppBundle
-from ..commands import CommandContext, CommandError, CommandRegistry
+from ..app import AppBundle, list_sessions
+from ..commands import CommandContext, CommandError, CommandRegistry, create_builtin_registry
 from ..runtime import RuntimeController, RuntimeRequest
 from .composer import Composer
 from .palette import CommandPalette
+from .selectors import SearchableSelector, SelectorItem
 from .status import StatusBar
 from .theme import APP_CSS
 from .transcript import Transcript
+from .tree import NavigationChoice, NavigationChoiceScreen, SessionTreeModel, TreeNavigator
 
 
 class ApprovalScreen(ModalScreen[str]):
@@ -63,10 +66,11 @@ class LeAgentApp(App[None]):
 
             runtime = RuntimeController(runtime, static_factory)
         self.runtime = runtime
-        self.registry = registry or CommandRegistry()
+        self.registry = registry or create_builtin_registry()
         self.initial_prompt = initial_prompt
         self.show_tool_details = False
         self._queue: list[str] = []
+        self._command_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
         yield Transcript(id="transcript")
@@ -131,7 +135,7 @@ class LeAgentApp(App[None]):
     async def on_composer_submitted(self, event: Composer.Submitted) -> None:
         self.query_one(CommandPalette).display = False
         if event.text.startswith("/"):
-            self.run_worker(self._execute_command(event.text), exclusive=False)
+            self._command_worker = self.run_worker(self._execute_command(event.text), exclusive=False)
             return
         agent = self.runtime.bundle.harness.agent
         if agent and agent.state.is_streaming:
@@ -152,7 +156,18 @@ class LeAgentApp(App[None]):
     async def _execute_command(self, text: str) -> None:
         transcript = self.query_one(Transcript)
         try:
-            result = await self.registry.execute(text, CommandContext(runtime=self.runtime))
+            result = await self.registry.execute(
+                text,
+                CommandContext(
+                    runtime=self.runtime,
+                    data={
+                        "select_model": self._select_model,
+                        "select_session": self._select_session,
+                        "select_setting": self._select_setting,
+                        "show_tree": self._show_tree,
+                    },
+                ),
+            )
             if result.message:
                 await transcript.append_message(result.message, "system")
             if result.exit_requested:
@@ -160,11 +175,53 @@ class LeAgentApp(App[None]):
         except (CommandError, RuntimeError) as error:
             await transcript.append_message(str(error), "error")
 
+    async def _select_model(self, names: tuple[str, ...], current: str) -> str | None:
+        items = [SelectorItem(name, name, "当前" if name == current else "") for name in names]
+        return await self.push_screen_wait(SearchableSelector("选择模型", items, current=current))
+
+    async def _select_session(self) -> str | None:
+        sessions = list_sessions(self.runtime.bundle.workspace)
+        items = [
+            SelectorItem(item.identifier, item.name or item.identifier[:12], item.identifier)
+            for item in sessions
+        ]
+        return await self.push_screen_wait(SearchableSelector("恢复会话", items))
+
+    async def _select_setting(self, current: str) -> str | None:
+        items = [
+            SelectorItem("readonly", "只读", "仅允许读取"),
+            SelectorItem("confirm", "确认", "编辑与 Bash 前询问"),
+            SelectorItem("trust", "信任", "自动允许工作区操作"),
+        ]
+        return await self.push_screen_wait(SearchableSelector("权限设置", items, current=current))
+
+    async def _show_tree(self) -> str:
+        model = await SessionTreeModel.from_session(self.runtime.bundle.session)
+        selection = await self.push_screen_wait(TreeNavigator(self.runtime.bundle.session, model))
+        if selection is None:
+            return "已取消会话回溯"
+        choice = await self.push_screen_wait(NavigationChoiceScreen())
+        if choice is NavigationChoice.CANCEL:
+            return "已取消会话回溯"
+        result = await self.runtime.bundle.harness.navigate_tree(
+            selection.entry_id,
+            summarize=choice is NavigationChoice.SUMMARIZE,
+        )
+        await self.runtime.reload_context()
+        self._refresh_status()
+        if result.summary_entry_id:
+            return f"已带摘要回溯到：{selection.entry_id}"
+        return f"已直接回溯到：{selection.entry_id}"
+
     def _refresh_status(self) -> None:
         self.query_one(StatusBar).refresh_bundle(self.runtime.bundle, queue_size=len(self._queue))
 
     def action_abort(self) -> None:
-        self.runtime.abort()
+        agent = self.runtime.bundle.harness.agent
+        if agent and agent.state.is_streaming:
+            self.runtime.abort()
+        elif self._command_worker:
+            self._command_worker.cancel()
 
     def action_toggle_tools(self) -> None:
         self.show_tool_details = not self.show_tool_details

@@ -8,10 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from le_agent_ai import Model, ProviderContext, TextContent, UserMessage
-from le_agent_ai.models import AgentMessage
 from le_agent_ai.provider import Provider
 from le_agent_ai.providers import AnthropicProvider, OpenAICompatibleProvider
-from le_agent_core.compaction import Summarizer
+from le_agent_core.compaction import Summarizer, SummaryRequest
 from le_agent_core.harness import AgentHarness
 from le_agent_core.loop import AgentLoopConfig, AgentTool
 from le_agent_core.session import JsonlSessionStore, MemorySessionStore, Session, SessionRepository
@@ -33,6 +32,16 @@ class AppBundle:
     skills: dict[str, Skill]
     session: Session
     model_name: str
+    model_names: tuple[str, ...] = ()
+    workspace: Path = Path(".")
+    persistent_session: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class SessionDescriptor:
+    identifier: str
+    name: str | None
+    updated_at: float
 
 
 def _session_root(workspace: Path) -> Path:
@@ -48,6 +57,22 @@ def latest_session_id(workspace: Path) -> str | None:
     return max(candidates, key=lambda path: path.stat().st_mtime).stem
 
 
+def list_sessions(workspace: Path) -> list[SessionDescriptor]:
+    root = _session_root(workspace)
+    descriptors: list[SessionDescriptor] = []
+    for path in root.glob("*.jsonl") if root.is_dir() else ():
+        name: str | None = None
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines()[1:]:
+                value = json.loads(line)
+                if value.get("type") == "session_info" and value.get("name"):
+                    name = str(value["name"])
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        descriptors.append(SessionDescriptor(path.stem, name, path.stat().st_mtime))
+    return sorted(descriptors, key=lambda item: item.updated_at, reverse=True)
+
+
 def _provider(config: AppConfig, model: Model) -> Provider:
     provider_config = config.providers.get(model.provider)
     kind = provider_config.kind if provider_config else model.provider
@@ -60,12 +85,21 @@ def _provider(config: AppConfig, model: Model) -> Provider:
 
 
 async def _model_summarizer(provider: Provider, model: Model, api_key: str | None) -> Summarizer:
-    async def summarize(messages: list[AgentMessage], previous_summary: str | None) -> str:
-        transcript = "\n".join(json.dumps(message.model_dump(mode="json"), ensure_ascii=False) for message in messages)
-        prompt = """Summarize this coding-agent session for a future agent. Preserve goal, constraints, completed work,
-current work, key decisions, next steps, exact paths, and failures. Be concise and structured."""
-        if previous_summary:
-            prompt += f"\n\nPrevious summary:\n{previous_summary}"
+    async def summarize(request: SummaryRequest) -> str:
+        transcript = "\n".join(
+            json.dumps(message.model_dump(mode="json"), ensure_ascii=False) for message in request.messages
+        )
+        if request.kind == "branch":
+            prompt = """Summarize the abandoned branch for a future agent after navigating to another checkpoint.
+Preserve useful conclusions, edits, paths, commands and failures without continuing the task."""
+        else:
+            prompt = """Summarize this coding-agent session for a future agent.
+Preserve goal, constraints, completed work, current work, key decisions, next steps, exact paths, and failures.
+Be concise and structured."""
+        if request.previous_summary:
+            prompt += f"\n\nPrevious summary:\n{request.previous_summary}"
+        if request.custom_instructions:
+            prompt += f"\n\nUser focus instructions:\n{request.custom_instructions}"
         prompt += f"\n\nConversation:\n{transcript}"
         stream = await provider.stream(
             model,
@@ -94,6 +128,7 @@ async def create_bundle(
     resume: str | None = None,
     no_session: bool = False,
     system_prompt_override: str | None = None,
+    session_override: Session | None = None,
 ) -> AppBundle:
     registry = registry_from_config(config)
     selected_name = model_name or config.default_model
@@ -108,7 +143,10 @@ async def create_bundle(
     system_prompt = system_prompt_override or (BASE_SYSTEM_PROMPT + "\n\n" + skill_catalog_prompt(skills))
     policy = PermissionController(permission or PermissionMode(config.permission))
     repository = SessionRepository(MemorySessionStore() if no_session else JsonlSessionStore(_session_root(workspace)))
-    session = await repository.open(resume) if resume else await repository.create()
+    if session_override is not None:
+        session = session_override
+    else:
+        session = await repository.open(resume) if resume else await repository.create()
     tools: list[AgentTool[Any]] = [
         ReadTool(workspace, skill_roots=[user_skills, project_skills]),
         WriteTool(workspace),
@@ -129,4 +167,13 @@ async def create_bundle(
         system_prompt=system_prompt,
         summarizer=summarizer,
     )
-    return AppBundle(harness=harness, policy=policy, skills=skills, session=session, model_name=selected_name)
+    return AppBundle(
+        harness=harness,
+        policy=policy,
+        skills=skills,
+        session=session,
+        model_name=selected_name,
+        model_names=tuple(config.models),
+        workspace=workspace,
+        persistent_session=not no_session,
+    )

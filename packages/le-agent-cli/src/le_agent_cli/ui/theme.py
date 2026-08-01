@@ -83,4 +83,17 @@ Screen {
     border: thick #5e81ac;
     background: #17202a;
 }
+
+SearchableSelector {
+    align: center middle;
+}
+
+#selector-title, #selector-search, #selector-options {
+    width: 72;
+    background: #17202a;
+}
+
+#selector-title { height: 3; padding: 1 2 0 2; border-top: thick #5e81ac; }
+#selector-search { height: 3; margin: 0; }
+#selector-options { height: 16; border-bottom: thick #5e81ac; }
 """

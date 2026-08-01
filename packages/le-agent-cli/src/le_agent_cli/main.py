@@ -11,9 +11,10 @@ from typing import Any
 from le_agent_ai import AssistantMessage
 from le_agent_core.loop import AgentEvent
 
-from .app import create_bundle, latest_session_id
+from .app import AppBundle, create_bundle, latest_session_id
 from .config import load_config
 from .permissions import PermissionMode
+from .runtime import RuntimeController, RuntimeRequest
 from .tui import LeAgentApp
 
 
@@ -118,7 +119,19 @@ def main() -> int:
     except (ValueError, KeyError) as error:
         print(f"le-agent: {error}")
         return 2
-    LeAgentApp(bundle, initial_prompt=args.prompt).run()
+    async def factory(request: RuntimeRequest) -> AppBundle:
+        return await create_bundle(
+            config=config,
+            workspace=workspace,
+            model_name=request.model_name,
+            permission=PermissionMode(args.permission) if args.permission else None,
+            resume=request.resume,
+            no_session=args.no_session,
+            system_prompt_override=_system_prompt(args.system_prompt),
+            session_override=request.session,
+        )
+
+    LeAgentApp(RuntimeController(bundle, factory), initial_prompt=args.prompt).run()
     return 0
 
 

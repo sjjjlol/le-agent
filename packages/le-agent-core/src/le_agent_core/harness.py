@@ -6,7 +6,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from .agent import Agent, AgentState
-from .compaction import CompactionSettings, Summarizer, compact_session, estimate_context_tokens, should_compact
+from .compaction import (
+    CompactionSettings,
+    Summarizer,
+    SummaryRequest,
+    compact_session,
+    estimate_context_tokens,
+    should_compact,
+)
 from .loop import AgentEvent, AgentLoopConfig, AgentTool
 from .session import Session
 
@@ -58,11 +65,21 @@ class AgentHarness:
         await agent.continue_run()
         await self._auto_compact()
 
-    async def compact(self, summarizer: Summarizer | None = None) -> bool:
+    async def compact(
+        self,
+        summarizer: Summarizer | None = None,
+        *,
+        instructions: str | None = None,
+    ) -> bool:
         active_summarizer = summarizer or self.summarizer
         if active_summarizer is None:
             raise RuntimeError("a summarizer is required for compaction")
-        return await compact_session(self.session, self.compaction_settings, active_summarizer)
+        return await compact_session(
+            self.session,
+            self.compaction_settings,
+            active_summarizer,
+            instructions=instructions,
+        )
 
     async def move_to(self, entry_id: str | None, *, summary: str | None = None) -> None:
         old_leaf = await self.session.leaf_id()
@@ -98,7 +115,9 @@ class AgentHarness:
             if active_summarizer is None:
                 raise RuntimeError("a summarizer is required for summarized navigation")
             messages = await self.session.messages_for_entries(divergence.abandoned_entries)
-            summary = await active_summarizer(messages, instructions)
+            summary = await active_summarizer(
+                SummaryRequest(kind="branch", messages=messages, custom_instructions=instructions)
+            )
 
         await self.session.move_to(entry_id)
         summary_entry_id = None

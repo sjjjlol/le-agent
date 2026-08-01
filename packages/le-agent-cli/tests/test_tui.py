@@ -50,6 +50,19 @@ async def test_typing_slash_opens_filtered_palette_and_tab_completes() -> None:
         assert not palette.display
 
 
+@pytest.mark.asyncio
+async def test_default_tui_registry_exposes_builtin_commands_on_slash() -> None:
+    app = LeAgentApp(await _bundle())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.click("#composer")
+        await pilot.press("/")
+
+        names = {command.name for command in app.registry.suggest()}
+        assert {"help", "model", "resume", "tree", "compact", "skill", "quit"} <= names
+        assert app.query_one(CommandPalette).option_count == len(names)
+
+
 class ComposerTestApp(App[None]):
     def __init__(self) -> None:
         super().__init__()

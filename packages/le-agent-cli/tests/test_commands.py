@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from le_agent_cli.commands import (
     CommandAvailability,
@@ -6,6 +8,7 @@ from le_agent_cli.commands import (
     CommandResult,
     CommandSpec,
     CommandUnavailableError,
+    create_builtin_registry,
 )
 
 
@@ -53,3 +56,67 @@ async def test_unavailable_command_reports_its_reason() -> None:
 
     with pytest.raises(CommandUnavailableError, match="无持久化会话"):
         await registry.execute("/tree", CommandContext())
+
+
+def test_builtin_registry_contains_v2_command_set_and_hidden_compatibility_aliases() -> None:
+    registry = create_builtin_registry()
+
+    assert {command.name for command in registry.suggest()} == {
+        "compact",
+        "help",
+        "hotkeys",
+        "model",
+        "name",
+        "new",
+        "quit",
+        "resume",
+        "session",
+        "settings",
+        "skill",
+        "skills",
+        "tree",
+    }
+    assert registry.resolve("status").name == "session"
+    assert registry.resolve("clear").name == "new"
+    assert "clear" not in {command.name for command in registry.suggest()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["/resume abc", "/tree", "/name demo"])
+async def test_persistence_commands_explain_why_they_are_disabled_without_session(command: str) -> None:
+    bundle = SimpleNamespace(persistent_session=False)
+    runtime = SimpleNamespace(bundle=bundle)
+
+    with pytest.raises(CommandUnavailableError, match="--no-session"):
+        await create_builtin_registry().execute(command, CommandContext(runtime=runtime))
+
+
+@pytest.mark.asyncio
+async def test_model_and_compact_commands_use_runtime_and_custom_instructions() -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    class Harness:
+        async def compact(self, *, instructions: str | None = None) -> bool:
+            calls.append(("compact", instructions))
+            return True
+
+    class Runtime:
+        bundle = SimpleNamespace(
+            harness=Harness(),
+            persistent_session=True,
+            model_name="old",
+            model_names=("old", "new"),
+        )
+
+        async def switch_model(self, name: str) -> None:
+            calls.append(("model", name))
+
+        async def reload_context(self) -> None:
+            calls.append(("reload", None))
+
+    registry = create_builtin_registry()
+    context = CommandContext(runtime=Runtime())
+
+    assert (await registry.execute("/model new", context)).message == "已切换模型：new"
+    assert (await registry.execute("/compact 重点保留接口决策", context)).message == "上下文压缩完成"
+    assert calls == [("model", "new"), ("compact", "重点保留接口决策"), ("reload", None)]

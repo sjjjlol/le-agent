@@ -1,7 +1,7 @@
 import pytest
 from le_agent_ai import FauxProvider, Model, ScriptedResponse, TextContent, UserMessage
 from le_agent_core import AgentLoopConfig
-from le_agent_core.compaction import CompactionSettings, estimate_context_tokens, should_compact
+from le_agent_core.compaction import CompactionSettings, SummaryRequest, estimate_context_tokens, should_compact
 from le_agent_core.harness import AgentHarness
 from le_agent_core.session import MemorySessionStore, SessionRepository
 
@@ -56,9 +56,10 @@ async def test_harness_summary_navigation_is_atomic_and_appends_summary_under_ta
     await session.move_to(old_leaf)
     seen: list[str] = []
 
-    async def summarize(messages: list[object], instructions: str | None) -> str:
-        assert instructions == "保留实现结论"
-        seen.extend(message.content[0].text for message in messages if isinstance(message, UserMessage))
+    async def summarize(request: SummaryRequest) -> str:
+        assert request.kind == "branch"
+        assert request.custom_instructions == "保留实现结论"
+        seen.extend(message.content[0].text for message in request.messages if isinstance(message, UserMessage))
         return "旧分支总结"
 
     model = Model(provider="faux", id="scripted", context_window=1000, max_output_tokens=100)
@@ -92,7 +93,7 @@ async def test_harness_summary_failure_keeps_leaf_and_history_unchanged() -> Non
     await session.move_to(old_leaf)
     entries_before = await session.entries()
 
-    async def fail(_messages: list[object], _instructions: str | None) -> str:
+    async def fail(_request: SummaryRequest) -> str:
         raise RuntimeError("summary failed")
 
     model = Model(provider="faux", id="scripted", context_window=1000, max_output_tokens=100)

@@ -8,8 +8,8 @@ from le_agent_core.harness import AgentHarness
 from le_agent_core.session import MemorySessionStore, SessionRepository
 
 
-async def _bundle(name: str, response: str) -> AppBundle:
-    session = await SessionRepository(MemorySessionStore()).create()
+async def _bundle(name: str, response: str, session=None) -> AppBundle:
+    session = session or await SessionRepository(MemorySessionStore()).create()
     provider = FauxProvider([ScriptedResponse.text(response)])
     model = Model(provider="faux", id=name, context_window=1000, max_output_tokens=100)
     harness = AgentHarness(session=session, config=AgentLoopConfig(model=model, provider=provider))
@@ -29,7 +29,7 @@ async def test_runtime_controller_rebinds_subscribers_when_bundle_changes() -> N
 
     async def factory(request: RuntimeRequest) -> AppBundle:
         requests.append(request)
-        return await _bundle(request.model_name or "two", "second")
+        return await _bundle(request.model_name or "two", "second", request.session)
 
     controller = RuntimeController(initial, factory)
     texts: list[str] = []
@@ -46,8 +46,10 @@ async def test_runtime_controller_rebinds_subscribers_when_bundle_changes() -> N
     await controller.prompt("second prompt")
 
     assert texts == ["first", "second"]
-    assert requests == [RuntimeRequest(model_name="two", resume=initial.session.id)]
+    assert requests == [RuntimeRequest(model_name="two", session=initial.session)]
     assert controller.bundle.model_name == "two"
+    assert controller.bundle.session is initial.session
+    assert "model_change" in {entry.type for entry in await controller.bundle.session.entries()}
 
 
 @pytest.mark.asyncio
