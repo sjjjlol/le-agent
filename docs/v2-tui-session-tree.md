@@ -7,7 +7,7 @@
 要求 Python 3.12 与 uv。在仓库根目录执行：
 
 ```bash
-uv sync --all-packages --dev
+uv sync --all-packages --dev --no-editable
 export OPENAI_API_KEY=...
 uv run le-agent
 ```

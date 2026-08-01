@@ -10,8 +10,20 @@
 
 ```bash
 export OPENAI_API_KEY=...
-uv sync --all-packages --dev
+uv sync --all-packages --dev --no-editable
 uv run le-agent
+```
+
+macOS 下建议保留 `--no-editable`：部分 Python 安装会忽略位于隐藏 `.venv` 中的 editable `.pth` 文件，
+导致 console script 已生成但无法导入 `le_agent_cli`。
+
+如果已有 `.venv` 曾安装过同版本的旧 workspace wheel，更新源码后可强制重建三个本地包：
+
+```bash
+uv sync --all-packages --dev --no-editable \
+  --reinstall-package le-agent-ai \
+  --reinstall-package le-agent-core \
+  --reinstall-package le-agent-cli
 ```
 
 默认模型是 `gpt-5.4-mini`。密钥只从环境变量读取，不会写入 TOML；切换到内置 Claude 配置前设置
