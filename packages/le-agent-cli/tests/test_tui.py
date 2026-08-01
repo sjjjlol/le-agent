@@ -11,7 +11,7 @@ from le_agent_cli.ui.app import LeAgentApp
 from le_agent_cli.ui.composer import Composer
 from le_agent_cli.ui.header import BrandHeader
 from le_agent_cli.ui.palette import CommandPalette
-from le_agent_cli.ui.status import context_usage
+from le_agent_cli.ui.status import ContextUsage, context_usage
 from le_agent_cli.ui.transcript import AssistantMessageView, ToolCard, Transcript, WaitingMessage
 from le_agent_core import AgentLoopConfig
 from le_agent_core.harness import AgentHarness
@@ -277,9 +277,23 @@ async def test_status_context_uses_latest_provider_usage_plus_trailing_messages(
         ]
     )
 
-    used, window, percent = context_usage(bundle)
+    usage = context_usage(bundle)
 
-    assert (used, window, percent) == (701, 1000, 70)
+    assert usage == ContextUsage(used_tokens=701, context_window=1000, percent=70)
+
+
+@pytest.mark.asyncio
+async def test_session_command_renders_clickable_file_link(tmp_path) -> None:
+    bundle = await _bundle()
+    bundle.session_file = tmp_path / "demo.jsonl"
+    app = LeAgentApp(bundle)
+
+    async with app.run_test(size=(80, 24)):
+        await app._execute_command("/session")
+        row = list(app.query(".system-message"))[-1]
+        rendered = row.render()
+        assert str(bundle.session_file) in rendered.plain
+        assert any(span.style.link == bundle.session_file.resolve().as_uri() for span in rendered.spans)
 
 
 @pytest.mark.asyncio

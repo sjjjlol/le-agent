@@ -7,6 +7,7 @@ import asyncio
 from le_agent_ai.models import StreamEvent, ToolCallContent
 from le_agent_core.loop import AgentEvent
 from pydantic import BaseModel
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
@@ -218,7 +219,10 @@ class LeAgentApp(App[None]):
             elif result.transcript_effect == "reload":
                 await self._reload_transcript()
             if result.message:
-                await transcript.append_message(result.message, "system")
+                rendered = Text(result.message)
+                for link in result.links:
+                    rendered.append(f"\n{link.label}", style=f"link {link.target}")
+                await transcript.append_message(rendered, "system")
             if result.exit_requested:
                 self.exit()
             self.query_one(BrandHeader).refresh_bundle(self.runtime.bundle)

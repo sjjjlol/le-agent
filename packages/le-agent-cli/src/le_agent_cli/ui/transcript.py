@@ -142,7 +142,7 @@ class Transcript(VerticalScroll):
         self._flush_timer: Timer | None = None
         self.waiting_message: WaitingMessage | None = None
 
-    async def append_message(self, text: str, kind: str = "assistant") -> None:
+    async def append_message(self, text: str | Text, kind: str = "assistant") -> None:
         row = Static(text, classes=f"message {kind}-message")
         await self.mount(row)
         self.scroll_end(animate=False)

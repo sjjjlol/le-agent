@@ -37,6 +37,7 @@ class AppBundle:
     persistent_session: bool = True
     api_key_env: str | None = None
     api_key_available: bool = True
+    session_file: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,4 +183,5 @@ async def create_bundle(
         persistent_session=not no_session,
         api_key_env=api_key_env,
         api_key_available=bool(api_key) if api_key_env else True,
+        session_file=None if no_session else _session_root(workspace) / f"{session.id}.jsonl",
     )

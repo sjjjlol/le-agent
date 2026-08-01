@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -74,12 +75,14 @@ def test_builtin_registry_contains_clear_as_an_independent_visible_command() -> 
         "quit",
         "resume",
         "session",
+        "status",
         "settings",
         "skill",
         "skills",
         "tree",
     }
     assert registry.resolve("clear").name == "clear"
+    assert registry.resolve("status").name == "status"
 
 
 @pytest.mark.asyncio
@@ -232,3 +235,56 @@ async def test_ui_backed_commands_report_cancel_and_missing_ui() -> None:
     assert resume_result.message == "已取消恢复会话"
     with pytest.raises(CommandError, match="当前界面不支持"):
         await registry.execute("/tree", CommandContext(runtime))
+
+
+@pytest.mark.asyncio
+async def test_session_reports_jsonl_link_and_status_only_reports_context_usage(tmp_path: Path) -> None:
+    session_file = tmp_path / "session.jsonl"
+
+    class Session:
+        id = "session-123"
+
+        async def entries(self):
+            return [1, 2, 3]
+
+    model = SimpleNamespace(context_window=1000)
+    bundle = SimpleNamespace(
+        session=Session(),
+        session_file=session_file,
+        persistent_session=True,
+        model_name="test-model",
+        harness=SimpleNamespace(agent=None, config=SimpleNamespace(model=model)),
+    )
+    registry = create_builtin_registry()
+    context = CommandContext(runtime=SimpleNamespace(bundle=bundle))
+
+    session_result = await registry.execute("/session", context)
+    status_result = await registry.execute("/status", context)
+
+    assert session_result.message is not None and "session-123" in session_result.message
+    assert str(session_file) in session_result.message
+    assert session_result.links[0].target == session_file.resolve().as_uri()
+    assert status_result.message == "上下文：0% · 0 / 1,000 tokens"
+    assert "会话" not in status_result.message
+
+
+@pytest.mark.asyncio
+async def test_session_explains_no_jsonl_in_memory_mode() -> None:
+    class Session:
+        id = "memory"
+
+        async def entries(self):
+            return []
+
+    bundle = SimpleNamespace(
+        session=Session(),
+        session_file=None,
+        persistent_session=False,
+        model_name="test",
+    )
+    result = await create_builtin_registry().execute(
+        "/session", CommandContext(runtime=SimpleNamespace(bundle=bundle))
+    )
+
+    assert "仅内存，无 JSONL 文件" in (result.message or "")
+    assert result.links == ()

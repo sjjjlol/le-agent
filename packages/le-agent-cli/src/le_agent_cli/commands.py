@@ -6,6 +6,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from .context import context_usage, format_context_usage
+
 CommandSource = Literal["builtin", "skill", "extension"]
 TranscriptEffect = Literal["preserve", "clear", "reload"]
 
@@ -245,12 +247,24 @@ def create_builtin_registry() -> CommandRegistry:
         bundle = context.runtime.bundle
         entries = await bundle.session.entries()
         persistence = "持久化" if bundle.persistent_session else "仅内存"
+        session_file = getattr(bundle, "session_file", None)
+        if session_file is None:
+            file_line = "文件：仅内存，无 JSONL 文件"
+            links: tuple[CommandLink, ...] = ()
+        else:
+            path = session_file.resolve()
+            file_line = f"文件：{path}"
+            links = (CommandLink("打开 JSONL 文件", path.as_uri()),)
         return CommandResult(
             message=(
                 f"会话：{bundle.session.id}\n模型：{bundle.model_name}\n"
-                f"模式：{persistence}\n记录：{len(entries)} entries"
-            )
+                f"模式：{persistence}\n记录：{len(entries)} entries\n{file_line}"
+            ),
+            links=links,
         )
+
+    async def status_command(_argument: str, context: CommandContext) -> CommandResult:
+        return CommandResult(message=format_context_usage(context_usage(context.runtime.bundle)))
 
     async def name_command(argument: str, context: CommandContext) -> CommandResult:
         if not argument:
@@ -280,7 +294,8 @@ def create_builtin_registry() -> CommandRegistry:
         CommandSpec("compact", "压缩当前上下文", "[instructions]", handler=compact_command),
         CommandSpec("skills", "列出可用 Skills", handler=skills_command),
         CommandSpec("skill", "调用指定 Skill", "<name> [args]", handler=skill_command),
-        CommandSpec("session", "显示会话状态", aliases=("status",), handler=session_command),
+        CommandSpec("session", "显示会话与存储信息", handler=session_command),
+        CommandSpec("status", "显示上下文占用", handler=status_command),
         CommandSpec("name", "设置会话名称", "<name>", availability=_persistent_session, handler=name_command),
         CommandSpec("hotkeys", "显示快捷键", handler=hotkeys_command),
         CommandSpec("quit", "退出 le-agent", handler=quit_command),
