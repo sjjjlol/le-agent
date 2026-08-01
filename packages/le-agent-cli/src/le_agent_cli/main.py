@@ -11,9 +11,10 @@ from typing import Any
 from le_agent_ai import AssistantMessage
 from le_agent_core.loop import AgentEvent
 
-from .app import create_bundle, latest_session_id
+from .app import AppBundle, create_bundle, latest_session_id
 from .config import load_config
 from .permissions import PermissionMode
+from .runtime import RuntimeController, RuntimeRequest
 from .tui import LeAgentApp
 
 
@@ -68,25 +69,28 @@ async def _run_noninteractive(args: argparse.Namespace) -> int:
         no_session=args.no_session,
         system_prompt_override=_system_prompt(args.system_prompt),
     )
-    if not args.prompt:
-        raise ValueError("--print and --json require a prompt")
-    agent = await bundle.harness.restore()
-    if args.json_mode:
+    try:
+        if not args.prompt:
+            raise ValueError("--print and --json require a prompt")
+        agent = await bundle.harness.restore()
+        if args.json_mode:
 
-        async def render(event: AgentEvent) -> None:
-            print(_event_json(event), flush=True)
+            async def render(event: AgentEvent) -> None:
+                print(_event_json(event), flush=True)
 
-        agent.subscribe(render)
-    await bundle.harness.prompt(args.prompt)
-    if args.print_mode:
-        messages = await bundle.session.build_context_messages()
-        assistant = next(
-            (message for message in reversed(messages) if getattr(message, "role", "") == "assistant"),
-            None,
-        )
-        if isinstance(assistant, AssistantMessage):
-            print(assistant.text)
-    return 0
+            agent.subscribe(render)
+        await bundle.harness.prompt(args.prompt)
+        if args.print_mode:
+            messages = await bundle.session.build_context_messages()
+            assistant = next(
+                (message for message in reversed(messages) if getattr(message, "role", "") == "assistant"),
+                None,
+            )
+            if isinstance(assistant, AssistantMessage):
+                print(assistant.text)
+        return 0
+    finally:
+        await bundle.session.close()
 
 
 def main() -> int:
@@ -118,7 +122,19 @@ def main() -> int:
     except (ValueError, KeyError) as error:
         print(f"le-agent: {error}")
         return 2
-    LeAgentApp(bundle, initial_prompt=args.prompt).run()
+    async def factory(request: RuntimeRequest) -> AppBundle:
+        return await create_bundle(
+            config=config,
+            workspace=workspace,
+            model_name=request.model_name,
+            permission=PermissionMode(args.permission) if args.permission else None,
+            resume=request.resume,
+            no_session=args.no_session,
+            system_prompt_override=_system_prompt(args.system_prompt),
+            session_override=request.session,
+        )
+
+    LeAgentApp(RuntimeController(bundle, factory), initial_prompt=args.prompt).run()
     return 0
 
 

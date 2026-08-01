@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TextIO
 
 from le_agent_ai.models import (
     AgentMessage,
@@ -69,6 +70,23 @@ class SessionEntry:
         return cls(identifier, parent_id, float(timestamp), entry_type, payload)
 
 
+@dataclass(frozen=True, slots=True)
+class SessionTreeNode:
+    entry: SessionEntry
+    children: tuple["SessionTreeNode", ...]
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BranchDivergence:
+    common_ancestor_id: str | None
+    abandoned_entries: tuple[SessionEntry, ...]
+
+
+class SessionLockedError(RuntimeError):
+    pass
+
+
 def _message_to_dict(message: AgentMessage) -> dict[str, Any]:
     return message.model_dump(mode="json")
 
@@ -97,6 +115,8 @@ class SessionStore(Protocol):
 
     async def append(self, identifier: str, entry: SessionEntry) -> None: ...
 
+    async def close(self, identifier: str) -> None: ...
+
 
 class MemorySessionStore:
     def __init__(self) -> None:
@@ -122,12 +142,16 @@ class MemorySessionStore:
             raise ValueError(f"duplicate session entry id: {entry.id}")
         entries.append(entry)
 
+    async def close(self, identifier: str) -> None:
+        del identifier
+
 
 class JsonlSessionStore:
     """One JSON object per line; header is durable metadata, remainder is an append-only entry log."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        self._lock_handles: dict[str, TextIO] = {}
 
     def _path(self, identifier: str) -> Path:
         return self.root / f"{identifier}.jsonl"
@@ -137,44 +161,101 @@ class JsonlSessionStore:
         path = self._path(identifier)
         if path.exists():
             raise ValueError(f"session already exists: {identifier}")
-        header = {"type": "session", "version": 1, "id": identifier, "created_at": created_at}
-        with path.open("x", encoding="utf-8") as handle:
+        header = {"type": "session", "version": 2, "id": identifier, "created_at": created_at}
+        handle = path.open("x+", encoding="utf-8")
+        try:
+            self._acquire(identifier, handle)
             handle.write(json.dumps(header, ensure_ascii=False) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
+        except Exception:
+            handle.close()
+            self._lock_handles.pop(identifier, None)
+            raise
         return []
 
     async def load(self, identifier: str) -> list[SessionEntry]:
         path = self._path(identifier)
         if not path.exists():
             raise KeyError(f"session not found: {identifier}")
-        lines = path.read_text(encoding="utf-8").splitlines()
+        handle = path.open("r+", encoding="utf-8")
+        try:
+            self._acquire(identifier, handle)
+            handle.seek(0)
+            raw = handle.read()
+            raw_lines = raw.splitlines(keepends=True)
+            lines = [line.rstrip("\r\n") for line in raw_lines]
+            entries, recovered_tail = self._parse_lines(identifier, lines)
+            if recovered_tail:
+                invalid_index = max(index for index, line in enumerate(lines) if line.strip())
+                handle.seek(0)
+                handle.write("".join(raw_lines[:invalid_index]))
+                handle.truncate()
+                handle.flush()
+                os.fsync(handle.fileno())
+            elif raw and not raw.endswith(("\n", "\r")):
+                handle.seek(0, os.SEEK_END)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            return entries
+        except Exception:
+            handle.close()
+            self._lock_handles.pop(identifier, None)
+            raise
+
+    @staticmethod
+    def _parse_lines(identifier: str, lines: list[str]) -> tuple[list[SessionEntry], bool]:
         if not lines:
             raise ValueError("session is missing header")
         header = json.loads(lines[0])
-        if header.get("type") != "session" or header.get("version") != 1 or header.get("id") != identifier:
+        if (
+            header.get("type") != "session"
+            or header.get("version") not in {1, 2}
+            or header.get("id") != identifier
+        ):
             raise ValueError("invalid session header")
         entries: list[SessionEntry] = []
+        recovered_tail = False
         nonempty = [line for line in lines[1:] if line.strip()]
         for index, line in enumerate(nonempty):
             try:
                 entries.append(SessionEntry.from_dict(json.loads(line)))
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 if index == len(nonempty) - 1:
+                    recovered_tail = True
                     break  # a process may have died while appending its final line
                 raise ValueError("invalid session entry before end of JSONL log") from error
         if len({entry.id for entry in entries}) != len(entries):
             raise ValueError("session contains duplicate entry ids")
-        return entries
+        return entries, recovered_tail
 
     async def append(self, identifier: str, entry: SessionEntry) -> None:
         path = self._path(identifier)
         if not path.exists():
             raise KeyError(f"session not found: {identifier}")
+        if identifier not in self._lock_handles:
+            raise SessionLockedError(f"session is not open for writing: {identifier}")
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
+
+    async def close(self, identifier: str) -> None:
+        handle = self._lock_handles.pop(identifier, None)
+        if handle is None:
+            return
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+    def _acquire(self, identifier: str, handle: TextIO) -> None:
+        if identifier in self._lock_handles:
+            raise SessionLockedError(f"session is already open for writing: {identifier}")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise SessionLockedError(f"session is already open for writing: {identifier}") from error
+        self._lock_handles[identifier] = handle
 
 
 class Session:
@@ -186,6 +267,7 @@ class Session:
         if len(self._by_id) != len(entries):
             raise ValueError("session contains duplicate entry ids")
         self._leaf_id = self._derive_leaf()
+        self._closed = False
 
     def _derive_leaf(self) -> str | None:
         leaf: str | None = None
@@ -198,6 +280,38 @@ class Session:
 
     async def leaf_id(self) -> str | None:
         return self._leaf_id
+
+    async def get_entry(self, entry_id: str) -> SessionEntry:
+        try:
+            return self._by_id[entry_id]
+        except KeyError as error:
+            raise KeyError(f"entry not found: {entry_id}") from error
+
+    async def get_tree(self) -> tuple[SessionTreeNode, ...]:
+        labels: dict[str, str] = {}
+        visible = [entry for entry in self._entries if entry.type != "leaf"]
+        visible_ids = {entry.id for entry in visible}
+        children: dict[str | None, list[SessionEntry]] = {}
+        for entry in visible:
+            if entry.parent_id is not None and entry.parent_id not in visible_ids:
+                raise ValueError(f"broken session parent reference: {entry.parent_id}")
+            children.setdefault(entry.parent_id, []).append(entry)
+            if entry.type == "label":
+                target_id = str(entry.payload["target_id"])
+                label = entry.payload.get("label")
+                if label:
+                    labels[target_id] = str(label)
+                else:
+                    labels.pop(target_id, None)
+
+        def build(entry: SessionEntry) -> SessionTreeNode:
+            return SessionTreeNode(
+                entry=entry,
+                children=tuple(build(child) for child in children.get(entry.id, [])),
+                label=labels.get(entry.id),
+            )
+
+        return tuple(build(entry) for entry in children.get(None, []))
 
     async def append_message(self, message: AgentMessage) -> str:
         return await self._append("message", {"message": _message_to_dict(message)})
@@ -238,11 +352,28 @@ class Session:
     async def append_custom(self, custom_type: str, data: Any = None) -> str:
         return await self._append("custom", {"custom_type": custom_type, "data": data})
 
+    async def close(self) -> None:
+        if self._closed:
+            return
+        await self._store.close(self.id)
+        self._closed = True
+
     async def move_to(self, entry_id: str | None) -> None:
         if entry_id is not None and entry_id not in self._by_id:
             raise KeyError(f"entry not found: {entry_id}")
-        await self._append("leaf", {"target_id": entry_id})
         self._leaf_id = entry_id
+
+    async def branch_divergence(self, from_id: str, to_id: str) -> BranchDivergence:
+        old_branch = await self.branch(from_id)
+        target_branch = await self.branch(to_id)
+        common_ancestor_id: str | None = None
+        shared_count = 0
+        for old_entry, target_entry in zip(old_branch, target_branch, strict=False):
+            if old_entry.id != target_entry.id:
+                break
+            common_ancestor_id = old_entry.id
+            shared_count += 1
+        return BranchDivergence(common_ancestor_id, tuple(old_branch[shared_count:]))
 
     async def branch(self, from_id: str | None = None) -> list[SessionEntry]:
         current = self._leaf_id if from_id is None else from_id
@@ -277,6 +408,26 @@ class Session:
                 context.append(BranchSummaryMessage(summary=entry.payload["summary"], from_id=entry.payload["from_id"]))
         return context
 
+    async def messages_for_entries(self, entries: tuple[SessionEntry, ...]) -> list[AgentMessage]:
+        """Project complete message-like entries for an abandoned branch summary."""
+        messages: list[AgentMessage] = []
+        for entry in entries:
+            if entry.type == "message":
+                messages.append(_message_from_dict(entry.payload["message"]))
+            elif entry.type == "branch_summary":
+                messages.append(
+                    BranchSummaryMessage(summary=entry.payload["summary"], from_id=entry.payload["from_id"])
+                )
+            elif entry.type == "compaction":
+                messages.append(
+                    CompactionSummaryMessage(
+                        summary=str(entry.payload["summary"]),
+                        tokens_before=int(entry.payload["tokens_before"]),
+                    )
+                )
+                messages.extend(_message_from_dict(item) for item in entry.payload.get("retained_tail", []))
+        return messages
+
     async def entry_id_for_message(self, target: AgentMessage) -> str | None:
         """Return the current-branch entry that stores this exact message payload."""
         target_data = _message_to_dict(target)
@@ -286,12 +437,14 @@ class Session:
         return None
 
     async def _append(self, entry_type: str, payload: dict[str, Any]) -> str:
+        if self._closed:
+            raise RuntimeError(f"session is closed: {self.id}")
         identifier = uuid.uuid4().hex[:12]
         entry = SessionEntry(identifier, self._leaf_id, time.time(), entry_type, payload)
         await self._store.append(self.id, entry)
         self._entries.append(entry)
         self._by_id[entry.id] = entry
-        self._leaf_id = payload["target_id"] if entry_type == "leaf" else entry.id
+        self._leaf_id = entry.id
         return entry.id
 
 

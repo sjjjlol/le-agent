@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 from le_agent_ai import FauxProvider, Model, ScriptedResponse, TextContent, UserMessage
-from le_agent_core import AgentContext, AgentLoopConfig, AgentTool, agent_loop
+from le_agent_core import AgentContext, AgentLoopConfig, AgentTool, ToolResult, agent_loop
 from pydantic import BaseModel
 
 
@@ -18,9 +18,9 @@ class EchoTool(AgentTool[EchoArgs]):
     args_model = EchoArgs
     execution_mode = "parallel"
 
-    async def execute(self, args: EchoArgs, *, on_update: Any = None) -> str:
+    async def execute(self, args: EchoArgs, *, on_update: Any = None) -> ToolResult:
         del on_update
-        return f"echo:{args.value}"
+        return ToolResult(content=[TextContent(text=f"echo:{args.value}")], details={"source": "echo"})
 
 
 @pytest.mark.asyncio
@@ -41,6 +41,7 @@ async def test_loop_persists_assistant_and_tool_result_in_source_order() -> None
 
     assert [message.role for message in messages] == ["user", "assistant", "tool_result", "assistant"]
     assert messages[2].content[0].text == "echo:hi"  # type: ignore[union-attr]
+    assert messages[2].details == {"source": "echo"}  # type: ignore[union-attr]
     assert [event.type for event in events] == [
         "agent_start",
         "turn_start",

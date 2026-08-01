@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import uuid
 from pathlib import Path
 from typing import Any
 
+from le_agent_ai import TextContent
 from le_agent_core import AgentTool, ToolResult
 from pydantic import BaseModel, Field
 
@@ -134,11 +137,14 @@ class BashTool(AgentTool[BashArgs]):
     args_model = BashArgs
     execution_mode = "sequential"
 
-    def __init__(self, workspace: Path, *, output_limit: int = 12_000) -> None:
+    def __init__(self, workspace: Path, *, output_limit: int = 12_000, log_root: Path | None = None) -> None:
         self.workspace = workspace.resolve()
         self.output_limit = output_limit
+        self.log_root = log_root
 
     async def execute(self, args: BashArgs, *, on_update: Any = None) -> ToolResult:
+        log_path: Path | None = None
+        chunks: list[str] = []
         try:
             process = await asyncio.create_subprocess_shell(
                 args.command,
@@ -146,21 +152,47 @@ class BashTool(AgentTool[BashArgs]):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
+            if self.log_root is not None:
+                self.log_root.mkdir(parents=True, exist_ok=True)
+                log_path = self.log_root / f"{uuid.uuid4().hex}.log"
             try:
-                stdout, _ = await asyncio.wait_for(process.communicate(), timeout=args.timeout)
+                async with asyncio.timeout(args.timeout):
+                    if process.stdout is None:
+                        raise RuntimeError("bash stdout pipe is unavailable")
+                    while chunk := await process.stdout.read(4096):
+                        text = chunk.decode("utf-8", errors="replace")
+                        chunks.append(text)
+                        if log_path:
+                            with log_path.open("a", encoding="utf-8") as handle:
+                                handle.write(text)
+                        if on_update:
+                            update_result = on_update(text)
+                            if inspect.isawaitable(update_result):
+                                await update_result
+                    await process.wait()
             except TimeoutError:
                 process.kill()
                 await process.wait()
-                return ToolResult.text(f"command timed out after {args.timeout}s", is_error=True)
-            output = stdout.decode("utf-8", errors="replace")
-            if on_update and output:
-                result = on_update(output[: self.output_limit])
-                if asyncio.iscoroutine(result):
-                    await result
-            rendered = output[: self.output_limit]
+                return ToolResult(
+                    content=[TextContent(text=f"command timed out after {args.timeout}s")],
+                    is_error=True,
+                    details={"log_path": str(log_path)} if log_path else None,
+                )
+            output = "".join(chunks)
+            rendered = output[-self.output_limit :]
             if len(output) > self.output_limit:
-                rendered += "\n[output truncated]"
+                suffix = f"; full log: {log_path}" if log_path else ""
+                rendered = f"[output truncated{suffix}]\n{rendered}"
             prefix = f"exit code {process.returncode}"
-            return ToolResult.text(f"{prefix}\n{rendered}", is_error=process.returncode != 0)
+            return ToolResult(
+                content=[TextContent(text=f"{prefix}\n{rendered}")],
+                is_error=process.returncode != 0,
+                details={"log_path": str(log_path)} if log_path else None,
+            )
+        except asyncio.CancelledError:
+            if "process" in locals() and process.returncode is None:
+                process.kill()
+                await process.wait()
+            raise
         except OSError as error:
             return ToolResult.text(str(error), is_error=True)

@@ -1,7 +1,8 @@
+import asyncio
 from pathlib import Path
 
 import pytest
-from le_agent_cli.tools import EditArgs, EditTool, ReadArgs, ReadTool, WriteArgs, WriteTool
+from le_agent_cli.tools import BashArgs, BashTool, EditArgs, EditTool, ReadArgs, ReadTool, WriteArgs, WriteTool
 
 
 @pytest.mark.asyncio
@@ -29,3 +30,23 @@ async def test_edit_requires_exactly_one_match_by_default(tmp_path: Path) -> Non
 
     assert result.is_error
     assert target.read_text(encoding="utf-8") == "same\nsame\n"
+
+
+@pytest.mark.asyncio
+async def test_bash_streams_chunks_and_saves_complete_output(tmp_path: Path) -> None:
+    updates: list[str] = []
+    logs = tmp_path / "logs"
+    tool = BashTool(tmp_path, output_limit=8, log_root=logs)
+
+    result = await tool.execute(
+        BashArgs(command="printf 'first\\n'; /bin/sleep 0.05; printf 'second\\n'"),
+        on_update=updates.append,
+    )
+
+    assert len(updates) >= 2
+    assert "second" in result.content[0].text
+    assert "truncated" in result.content[0].text
+    assert result.details is not None
+    log_path = Path(result.details["log_path"])
+    assert log_path.parent == logs
+    assert await asyncio.to_thread(log_path.read_text, encoding="utf-8") == "first\nsecond\n"

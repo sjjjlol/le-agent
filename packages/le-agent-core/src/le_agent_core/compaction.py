@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Literal
 
 from le_agent_ai.models import (
     AgentMessage,
@@ -21,6 +22,14 @@ class CompactionSettings:
     enabled: bool = True
     reserve_tokens: int = 16_384
     keep_recent_tokens: int = 20_000
+
+
+@dataclass(frozen=True, slots=True)
+class SummaryRequest:
+    kind: Literal["compaction", "branch"]
+    messages: list[AgentMessage]
+    previous_summary: str | None = None
+    custom_instructions: str | None = None
 
 
 def estimate_message_tokens(message: AgentMessage) -> int:
@@ -59,10 +68,16 @@ def should_compact(context_tokens: int, context_window: int, settings: Compactio
     return settings.enabled and context_tokens > context_window - settings.reserve_tokens
 
 
-Summarizer = Callable[[list[AgentMessage], str | None], Awaitable[str]]
+Summarizer = Callable[[SummaryRequest], Awaitable[str]]
 
 
-async def compact_session(session: Session, settings: CompactionSettings, summarizer: Summarizer) -> bool:
+async def compact_session(
+    session: Session,
+    settings: CompactionSettings,
+    summarizer: Summarizer,
+    *,
+    instructions: str | None = None,
+) -> bool:
     messages = await session.build_context_messages()
     tokens_before = estimate_context_tokens(messages)
     retained: list[AgentMessage] = []
@@ -80,7 +95,14 @@ async def compact_session(session: Session, settings: CompactionSettings, summar
         (message.summary for message in messages if isinstance(message, CompactionSummaryMessage)),
         None,
     )
-    summary = await summarizer(history, previous_summary)
+    summary = await summarizer(
+        SummaryRequest(
+            kind="compaction",
+            messages=history,
+            previous_summary=previous_summary,
+            custom_instructions=instructions,
+        )
+    )
     first_kept = await session.entry_id_for_message(retained[0]) if retained else None
     await session.append_compaction(
         summary, first_kept_entry_id=first_kept, tokens_before=tokens_before, retained_tail=retained

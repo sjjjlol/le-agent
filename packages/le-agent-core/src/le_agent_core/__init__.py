@@ -1,7 +1,10 @@
 """Pi-style agent loop, stateful wrapper and durable session primitives."""
 
 from .agent import Agent, AgentState
+from .compaction import SummaryRequest
+from .harness import TreeNavigationResult
 from .loop import AgentContext, AgentEvent, AgentLoopConfig, AgentTool, ToolResult, agent_loop, agent_loop_continue
+from .session import BranchDivergence, SessionTreeNode
 
 __all__ = [
     "Agent",
@@ -10,7 +13,11 @@ __all__ = [
     "AgentLoopConfig",
     "AgentState",
     "AgentTool",
+    "BranchDivergence",
+    "SessionTreeNode",
+    "SummaryRequest",
     "ToolResult",
+    "TreeNavigationResult",
     "agent_loop",
     "agent_loop_continue",
 ]

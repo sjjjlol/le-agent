@@ -299,6 +299,7 @@ async def _execute_calls(
             tool_name=call.name,
             content=result.content,
             is_error=result.is_error,
+            details=result.details,
             timestamp=time.time(),
         )
         await _emit(
