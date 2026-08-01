@@ -73,6 +73,7 @@ class AgentEvent:
         "agent_end",
         "turn_start",
         "turn_end",
+        "assistant_request_start",
         "message_start",
         "message_update",
         "message_end",
@@ -245,6 +246,7 @@ async def _stream_assistant(
         messages=converted,
         tools=[tool.definition() for tool in context.tools],
     )
+    await _emit(stream, AgentEvent(type="assistant_request_start"))
     provider_stream = await config.provider.stream(config.model, provider_context, api_key=config.api_key)
     started = False
     async for provider_event in provider_stream:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from le_agent_ai.models import (
     AgentMessage,
     AssistantMessage,
@@ -35,10 +37,14 @@ class AssistantMessageView(Static):
             self.text_content += event.delta or ""
         elif event.type == "thinking_delta":
             self.thinking_content += event.delta or ""
+        elif event.type == "error":
+            self.text_content = event.error_message or "模型请求失败"
         self.refresh_content()
 
     def finish(self, message: AssistantMessage) -> None:
-        self.text_content = message.text
+        self.text_content = message.text or message.error_message or (
+            "请求已中止" if message.stop_reason == "aborted" else ""
+        )
         self.thinking_content = "".join(
             block.thinking for block in message.content if isinstance(block, ThinkingContent)
         )
@@ -50,6 +56,27 @@ class AssistantMessageView(Static):
         if self.show_thinking and self.thinking_content:
             rendered.append(f"thinking  {self.thinking_content}\n", style="#6f7a89 italic")
         rendered.append(self.text_content or ("…" if not self.complete else ""), style="#d8dee9")
+        self.renderable = rendered
+        self.update(rendered)
+
+
+class WaitingMessage(Static):
+    def __init__(self) -> None:
+        super().__init__(classes="message waiting-message")
+        self.started_at = time.monotonic()
+        self.renderable = Text()
+
+    def on_mount(self) -> None:
+        self.set_interval(0.1, self.refresh_content)
+        self.refresh_content()
+
+    def refresh_content(self) -> None:
+        elapsed = time.monotonic() - self.started_at
+        frame = "◐◓◑◒"[int(elapsed * 8) % 4]
+        rendered = Text.assemble(
+            (f"{frame} 正在等待", "#88c0d0"),
+            (f" · {elapsed:.1f}s · Esc 中止", "#6f7a89"),
+        )
         self.renderable = rendered
         self.update(rendered)
 
@@ -113,6 +140,7 @@ class Transcript(VerticalScroll):
         self.tool_cards: dict[str, ToolCard] = {}
         self._pending_events: list[StreamEvent] = []
         self._flush_timer: Timer | None = None
+        self.waiting_message: WaitingMessage | None = None
 
     async def append_message(self, text: str, kind: str = "assistant") -> None:
         row = Static(text, classes=f"message {kind}-message")
@@ -120,13 +148,17 @@ class Transcript(VerticalScroll):
         self.scroll_end(animate=False)
 
     async def clear_messages(self) -> None:
+        was_waiting = self.waiting_message is not None
         if self._flush_timer is not None:
             self._flush_timer.stop()
         self._flush_timer = None
         self._pending_events.clear()
         self.current_assistant = None
+        self.waiting_message = None
         self.tool_cards.clear()
         await self.remove_children()
+        if was_waiting:
+            await self.start_waiting()
 
     async def reload_from_context(self, messages: list[AgentMessage]) -> None:
         await self.clear_messages()
@@ -159,6 +191,18 @@ class Transcript(VerticalScroll):
             self.current_assistant = AssistantMessageView()
             await self.mount(self.current_assistant)
         return self.current_assistant
+
+    async def start_waiting(self) -> WaitingMessage:
+        if self.waiting_message is None:
+            self.waiting_message = WaitingMessage()
+            await self.mount(self.waiting_message)
+            self.scroll_end(animate=False)
+        return self.waiting_message
+
+    async def stop_waiting(self) -> None:
+        waiting, self.waiting_message = self.waiting_message, None
+        if waiting is not None and waiting.parent is self:
+            await waiting.remove()
 
     async def queue_assistant_event(self, event: StreamEvent) -> None:
         await self.start_assistant()

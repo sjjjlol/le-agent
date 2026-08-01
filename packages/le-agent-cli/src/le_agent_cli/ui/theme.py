@@ -6,6 +6,14 @@ Screen {
     color: #d8dee9;
 }
 
+#brand-header {
+    width: 100%;
+    height: 2;
+    padding: 0 2;
+    background: #151b22;
+    color: #d8dee9;
+}
+
 #transcript {
     height: 1fr;
     padding: 1 2;
@@ -21,6 +29,7 @@ Screen {
 .assistant-message { color: #d8dee9; }
 .system-message { color: #8f9baa; }
 .error-message { color: #bf616a; }
+.waiting-message { color: #88c0d0; }
 
 #command-palette {
     display: none;

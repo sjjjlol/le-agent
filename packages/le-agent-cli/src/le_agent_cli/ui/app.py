@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from le_agent_ai.models import StreamEvent, ToolCallContent
 from le_agent_core.loop import AgentEvent
 from pydantic import BaseModel
@@ -15,6 +17,7 @@ from ..app import AppBundle, list_sessions
 from ..commands import CommandContext, CommandError, CommandRegistry, create_builtin_registry
 from ..runtime import RuntimeController, RuntimeRequest
 from .composer import Composer
+from .header import BrandHeader
 from .palette import CommandPalette
 from .selectors import SearchableSelector, SelectorItem
 from .status import StatusBar
@@ -73,6 +76,7 @@ class LeAgentApp(App[None]):
         self._command_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
+        yield BrandHeader(self.runtime.bundle, id="brand-header")
         yield Transcript(id="transcript")
         palette = CommandPalette(id="command-palette")
         palette.display = False
@@ -88,8 +92,13 @@ class LeAgentApp(App[None]):
         await self._reload_transcript()
         self.query_one(Composer).focus()
         self._refresh_status()
+        if self.runtime.bundle.api_key_env and not self.runtime.bundle.api_key_available:
+            await self.query_one(Transcript).append_message(
+                f"未检测到 {self.runtime.bundle.api_key_env}；模型请求会失败，除非当前代理无需密钥。",
+                "error",
+            )
         if self.initial_prompt:
-            self.run_worker(self.runtime.prompt(self.initial_prompt), exclusive=False)
+            self.run_worker(self._run_prompt(self.initial_prompt), exclusive=False)
 
     async def on_unmount(self) -> None:
         await self.runtime.close()
@@ -99,11 +108,16 @@ class LeAgentApp(App[None]):
 
     async def _render_event(self, event: AgentEvent) -> None:
         transcript = self.query_one(Transcript)
-        if event.type == "message_start" and (event.message is None or event.message.role == "assistant"):
+        if event.type == "assistant_request_start":
+            await transcript.start_waiting()
+        elif event.type == "message_start" and (event.message is None or event.message.role == "assistant"):
             await transcript.start_assistant()
         elif event.type == "message_update" and isinstance(event.assistant_event, StreamEvent):
+            if event.assistant_event.type in {"text_delta", "thinking_delta", "tool_call_delta", "error"}:
+                await transcript.stop_waiting()
             await transcript.queue_assistant_event(event.assistant_event)
         elif event.type == "tool_execution_start" and event.tool_call_id and event.tool_name:
+            await transcript.stop_waiting()
             await transcript.start_tool(event.tool_call_id, event.tool_name)
         elif event.type == "tool_execution_update" and event.tool_call_id:
             transcript.update_tool(event.tool_call_id, str(event.assistant_event or ""))
@@ -113,6 +127,7 @@ class LeAgentApp(App[None]):
             text = "".join(block.text for block in event.message.content)
             await transcript.append_message(f"❯ {text}", "user")
         elif event.type == "message_end" and event.message is not None and event.message.role == "assistant":
+            await transcript.stop_waiting()
             await transcript.finish_assistant(event.message)
         self._refresh_status()
 
@@ -165,7 +180,18 @@ class LeAgentApp(App[None]):
             self._queue.append(event.text)
             self._refresh_status()
             return
-        self.run_worker(self.runtime.prompt(event.text), exclusive=False)
+        self.run_worker(self._run_prompt(event.text), exclusive=False)
+
+    async def _run_prompt(self, text: str) -> None:
+        transcript = self.query_one(Transcript)
+        try:
+            await self.runtime.prompt(text)
+        except asyncio.CancelledError:
+            await transcript.stop_waiting()
+            await transcript.append_message("请求已中止", "error")
+        except Exception as error:
+            await transcript.stop_waiting()
+            await transcript.append_message(f"请求失败：{error}", "error")
 
     def on_composer_recall_requested(self, _event: Composer.RecallRequested) -> None:
         if self._queue:
@@ -195,6 +221,7 @@ class LeAgentApp(App[None]):
                 await transcript.append_message(result.message, "system")
             if result.exit_requested:
                 self.exit()
+            self.query_one(BrandHeader).refresh_bundle(self.runtime.bundle)
         except (CommandError, RuntimeError) as error:
             await transcript.append_message(str(error), "error")
 

@@ -35,6 +35,8 @@ class AppBundle:
     model_names: tuple[str, ...] = ()
     workspace: Path = Path(".")
     persistent_session: bool = True
+    api_key_env: str | None = None
+    api_key_available: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +139,8 @@ async def create_bundle(
     model = registry.require(selected_name)
     provider = _provider(config, model)
     api_key = api_key_for(config, model.provider)
+    provider_config = config.providers.get(model.provider)
+    api_key_env = provider_config.api_key_env if provider_config else None
     project_skills = workspace / ".le-agent" / "skills"
     user_skills = Path.home() / ".le-agent" / "skills"
     skills = load_skills(user_skills, project_skills)
@@ -176,4 +180,6 @@ async def create_bundle(
         model_names=tuple(config.models),
         workspace=workspace,
         persistent_session=not no_session,
+        api_key_env=api_key_env,
+        api_key_available=bool(api_key) if api_key_env else True,
     )

@@ -9,9 +9,10 @@ from le_agent_cli.commands import CommandRegistry, CommandSpec
 from le_agent_cli.permissions import PermissionController
 from le_agent_cli.ui.app import LeAgentApp
 from le_agent_cli.ui.composer import Composer
+from le_agent_cli.ui.header import BrandHeader
 from le_agent_cli.ui.palette import CommandPalette
 from le_agent_cli.ui.status import context_usage
-from le_agent_cli.ui.transcript import AssistantMessageView, ToolCard, Transcript
+from le_agent_cli.ui.transcript import AssistantMessageView, ToolCard, Transcript, WaitingMessage
 from le_agent_core import AgentLoopConfig
 from le_agent_core.harness import AgentHarness
 from le_agent_core.loop import AgentEvent
@@ -149,6 +150,66 @@ async def test_transcript_coalesces_stream_deltas_and_updates_tool_card_in_place
             )
         )
         assert len(app.query_one(Transcript).query(AssistantMessageView)) == 1
+
+
+@pytest.mark.asyncio
+async def test_request_waiting_starts_before_provider_output_and_stops_on_first_delta() -> None:
+    app = LeAgentApp(await _bundle())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._render_event(AgentEvent(type="assistant_request_start"))
+        await pilot.pause(0.05)
+        waiting = app.query_one(WaitingMessage)
+        assert "正在等待" in waiting.renderable.plain
+        assert "test" not in waiting.renderable.plain
+        assert "Esc 中止" in waiting.renderable.plain
+
+        await app._render_event(
+            AgentEvent(type="message_update", assistant_event=StreamEvent(type="text_delta", delta="hello"))
+        )
+        await pilot.pause(0.05)
+        assert len(app.query(WaitingMessage)) == 0
+
+
+@pytest.mark.asyncio
+async def test_provider_error_is_readable_and_always_stops_waiting() -> None:
+    app = LeAgentApp(await _bundle())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._render_event(AgentEvent(type="assistant_request_start"))
+        await app._render_event(
+            AgentEvent(
+                type="message_update",
+                assistant_event=StreamEvent(type="error", error_message="缺少 OPENAI_API_KEY"),
+            )
+        )
+        await app._render_event(
+            AgentEvent(
+                type="message_end",
+                message=AssistantMessage(
+                    content=[],
+                    provider="openai",
+                    model="gpt",
+                    stop_reason="error",
+                    error_message="缺少 OPENAI_API_KEY",
+                ),
+            )
+        )
+        await pilot.pause(0.05)
+
+        assert len(app.query(WaitingMessage)) == 0
+        assert "缺少 OPENAI_API_KEY" in app.query_one(AssistantMessageView).renderable.plain
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [40, 80, 120])
+async def test_compact_logo_header_is_visible_at_supported_widths(width: int) -> None:
+    app = LeAgentApp(await _bundle())
+
+    async with app.run_test(size=(width, 24)):
+        header = app.query_one(BrandHeader)
+        assert "le-agent" in header.renderable.plain
+        assert header.size.height == (1 if width == 40 else 2)
 
 
 @pytest.mark.asyncio
