@@ -58,12 +58,14 @@ class AgentHarness:
     async def prompt(self, text: str) -> None:
         agent = self.agent or await self.restore()
         await agent.prompt(text)
-        await self._auto_compact()
+        if not await self._recover_context_overflow(agent):
+            await self._auto_compact()
 
     async def continue_run(self) -> None:
         agent = self.agent or await self.restore()
         await agent.continue_run()
-        await self._auto_compact()
+        if not await self._recover_context_overflow(agent):
+            await self._auto_compact()
 
     async def compact(
         self,
@@ -150,3 +152,43 @@ class AgentHarness:
             self.compaction_settings,
         ):
             await self.compact()
+
+    async def _recover_context_overflow(self, failed_agent: Agent) -> bool:
+        if failed_agent.state.error_code != "context_overflow" or self.summarizer is None:
+            return False
+        failed_message = next(
+            (
+                message
+                for message in reversed(failed_agent.state.messages)
+                if getattr(message, "role", None) == "assistant"
+                and getattr(message, "error_code", None) == "context_overflow"
+            ),
+            None,
+        )
+        if failed_message is None:
+            return False
+        failed_entry_id = await self.session.entry_id_for_message(failed_message)
+        if failed_entry_id is None:
+            return False
+        failed_entry = await self.session.get_entry(failed_entry_id)
+        retry_from_id = failed_entry.parent_id
+        if retry_from_id is None:
+            return False
+
+        old_leaf = await self.session.leaf_id()
+        await self.session.move_to(retry_from_id)
+        self.agent = None
+        try:
+            changed = await self.compact()
+            if not changed:
+                await self.session.move_to(old_leaf)
+                self.agent = failed_agent
+                return False
+            retry_agent = await self.restore()
+            await retry_agent.continue_run()
+        except Exception:
+            if await self.session.leaf_id() == retry_from_id:
+                await self.session.move_to(old_leaf)
+                self.agent = failed_agent
+            raise
+        return True

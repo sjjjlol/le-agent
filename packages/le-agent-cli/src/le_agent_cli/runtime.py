@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -75,8 +76,7 @@ class RuntimeController:
 
     async def reload_context(self) -> None:
         """Rebuild AgentState after compaction or pointer navigation and rebind event forwarding."""
-        if self.bundle.harness.agent:
-            await self.bundle.harness.agent.wait_for_idle()
+        await self._wait_for_idle()
         if self._agent_unsubscribe:
             self._agent_unsubscribe()
         self.bundle.harness.agent = None
@@ -84,16 +84,39 @@ class RuntimeController:
         self._agent_unsubscribe = None
         await self.start()
 
+    async def close(self) -> None:
+        await self._wait_for_idle()
+        if self._agent_unsubscribe:
+            self._agent_unsubscribe()
+        self._agent_unsubscribe = None
+        self._started = False
+        await self.bundle.session.close()
+
     async def _replace(self, request: RuntimeRequest) -> None:
-        if self.bundle.harness.agent:
-            await self.bundle.harness.agent.wait_for_idle()
+        await self._wait_for_idle()
+        previous = self.bundle
         replacement = await self._factory(request)
+        if replacement.session is not previous.session:
+            try:
+                await previous.session.close()
+            except Exception:
+                await replacement.session.close()
+                raise
         if self._agent_unsubscribe:
             self._agent_unsubscribe()
         self.bundle = replacement
         self._started = False
         self._agent_unsubscribe = None
         await self.start()
+
+    async def _wait_for_idle(self) -> None:
+        agent = self.bundle.harness.agent
+        if agent is None:
+            return
+        try:
+            await agent.wait_for_idle()
+        except asyncio.CancelledError:
+            pass
 
     async def _forward(self, event: AgentEvent) -> None:
         for listener in list(self._listeners):

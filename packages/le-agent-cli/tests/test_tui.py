@@ -1,5 +1,5 @@
 import pytest
-from le_agent_ai import AssistantMessage, FauxProvider, Model, TextContent
+from le_agent_ai import AssistantMessage, FauxProvider, Model, TextContent, Usage, UserMessage
 from le_agent_ai.models import StreamEvent
 from le_agent_cli.app import AppBundle
 from le_agent_cli.commands import CommandRegistry, CommandSpec
@@ -7,6 +7,7 @@ from le_agent_cli.permissions import PermissionController
 from le_agent_cli.ui.app import LeAgentApp
 from le_agent_cli.ui.composer import Composer
 from le_agent_cli.ui.palette import CommandPalette
+from le_agent_cli.ui.status import context_usage
 from le_agent_cli.ui.transcript import AssistantMessageView, ToolCard, Transcript
 from le_agent_core import AgentLoopConfig
 from le_agent_core.harness import AgentHarness
@@ -128,3 +129,19 @@ async def test_transcript_coalesces_stream_deltas_and_updates_tool_card_in_place
             )
         )
         assert len(app.query_one(Transcript).query(AssistantMessageView)) == 1
+
+
+@pytest.mark.asyncio
+async def test_status_context_uses_latest_provider_usage_plus_trailing_messages() -> None:
+    bundle = await _bundle()
+    agent = await bundle.harness.restore()
+    agent.state.messages.extend(
+        [
+            AssistantMessage(content=[], usage=Usage(input_tokens=600, output_tokens=100)),
+            UserMessage(content=[TextContent(text="next")]),
+        ]
+    )
+
+    used, window, percent = context_usage(bundle)
+
+    assert (used, window, percent) == (701, 1000, 70)

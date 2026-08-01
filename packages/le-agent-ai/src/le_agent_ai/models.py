@@ -6,6 +6,8 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .errors import ErrorCode
+
 
 class LeModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -55,6 +57,7 @@ class AssistantMessage(LeModel):
     model: str = ""
     stop_reason: Literal["stop", "tool_use", "length", "error", "aborted"] = "stop"
     error_message: str | None = None
+    error_code: ErrorCode | None = None
     usage: Usage = Field(default_factory=Usage)
     timestamp: float = 0.0
 
@@ -142,3 +145,4 @@ class StreamEvent(LeModel):
     usage: Usage | None = None
     message: AssistantMessage | None = None
     error_message: str | None = None
+    error_code: ErrorCode | None = None

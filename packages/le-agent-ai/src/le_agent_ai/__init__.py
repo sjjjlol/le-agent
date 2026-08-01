@@ -1,5 +1,6 @@
 """Canonical models, provider protocols and event streams for le-agent."""
 
+from .errors import ErrorCode, normalize_error_code
 from .faux import FauxProvider, ScriptedResponse
 from .models import (
     AssistantMessage,
@@ -18,10 +19,12 @@ __all__ = [
     "AssistantMessage",
     "AsyncEventStream",
     "FauxProvider",
+    "ErrorCode",
     "Model",
     "ModelRegistry",
     "ProviderContext",
     "ScriptedResponse",
+    "normalize_error_code",
     "TextContent",
     "ToolCallContent",
     "ToolResultMessage",

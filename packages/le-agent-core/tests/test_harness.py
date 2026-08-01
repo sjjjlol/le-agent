@@ -110,6 +110,61 @@ async def test_harness_summary_failure_keeps_leaf_and_history_unchanged() -> Non
     assert await session.entries() == entries_before
 
 
+@pytest.mark.asyncio
+async def test_context_overflow_compacts_and_retries_once_on_a_new_branch() -> None:
+    repository = SessionRepository(MemorySessionStore())
+    session = await repository.create()
+    await session.append_message(UserMessage(content=[TextContent(text="old context " * 100)]))
+    provider = FauxProvider(
+        [
+            ScriptedResponse(error_message="too long", error_code="context_overflow"),
+            ScriptedResponse.text("recovered"),
+        ]
+    )
+    summary_requests: list[SummaryRequest] = []
+
+    async def summarize(request: SummaryRequest) -> str:
+        summary_requests.append(request)
+        return "compressed old context"
+
+    model = Model(provider="faux", id="scripted", context_window=200, max_output_tokens=50)
+    harness = AgentHarness(
+        session=session,
+        config=AgentLoopConfig(model=model, provider=provider),
+        compaction_settings=CompactionSettings(reserve_tokens=20, keep_recent_tokens=5),
+        summarizer=summarize,
+    )
+
+    await harness.prompt("continue")
+
+    assert len(provider.requests) == 2
+    assert len(summary_requests) == 1
+    context = await session.build_context_messages()
+    assert [message.role for message in context] == ["compaction_summary", "user", "assistant"]
+    assert context[-1].text == "recovered"  # type: ignore[union-attr]
+    error_entries = [
+        entry
+        for entry in await session.entries()
+        if entry.type == "message" and entry.payload["message"].get("error_code") == "context_overflow"
+    ]
+    assert len(error_entries) == 1
+    assert error_entries[0].id not in {entry.id for entry in await session.branch()}
+
+
+@pytest.mark.asyncio
+async def test_non_overflow_provider_error_is_not_replayed() -> None:
+    session = await SessionRepository(MemorySessionStore()).create()
+    provider = FauxProvider([ScriptedResponse(error_message="server unavailable", error_code="server_error")])
+    model = Model(provider="faux", id="scripted", context_window=200, max_output_tokens=50)
+    harness = AgentHarness(session=session, config=AgentLoopConfig(model=model, provider=provider))
+
+    await harness.prompt("do not replay")
+
+    assert len(provider.requests) == 1
+    context = await session.build_context_messages()
+    assert context[-1].error_code == "server_error"  # type: ignore[union-attr]
+
+
 def test_token_estimate_prefers_last_provider_usage_and_compaction_threshold() -> None:
     assert estimate_context_tokens([]) == 0
     assert should_compact(900, 1000, CompactionSettings(reserve_tokens=128, keep_recent_tokens=100))

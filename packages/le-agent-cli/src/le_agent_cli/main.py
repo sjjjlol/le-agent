@@ -69,25 +69,28 @@ async def _run_noninteractive(args: argparse.Namespace) -> int:
         no_session=args.no_session,
         system_prompt_override=_system_prompt(args.system_prompt),
     )
-    if not args.prompt:
-        raise ValueError("--print and --json require a prompt")
-    agent = await bundle.harness.restore()
-    if args.json_mode:
+    try:
+        if not args.prompt:
+            raise ValueError("--print and --json require a prompt")
+        agent = await bundle.harness.restore()
+        if args.json_mode:
 
-        async def render(event: AgentEvent) -> None:
-            print(_event_json(event), flush=True)
+            async def render(event: AgentEvent) -> None:
+                print(_event_json(event), flush=True)
 
-        agent.subscribe(render)
-    await bundle.harness.prompt(args.prompt)
-    if args.print_mode:
-        messages = await bundle.session.build_context_messages()
-        assistant = next(
-            (message for message in reversed(messages) if getattr(message, "role", "") == "assistant"),
-            None,
-        )
-        if isinstance(assistant, AssistantMessage):
-            print(assistant.text)
-    return 0
+            agent.subscribe(render)
+        await bundle.harness.prompt(args.prompt)
+        if args.print_mode:
+            messages = await bundle.session.build_context_messages()
+            assistant = next(
+                (message for message in reversed(messages) if getattr(message, "role", "") == "assistant"),
+                None,
+            )
+            if isinstance(assistant, AssistantMessage):
+                print(assistant.text)
+        return 0
+    finally:
+        await bundle.session.close()
 
 
 def main() -> int:

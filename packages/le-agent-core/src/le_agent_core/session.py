@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TextIO
 
 from le_agent_ai.models import (
     AgentMessage,
@@ -82,6 +83,10 @@ class BranchDivergence:
     abandoned_entries: tuple[SessionEntry, ...]
 
 
+class SessionLockedError(RuntimeError):
+    pass
+
+
 def _message_to_dict(message: AgentMessage) -> dict[str, Any]:
     return message.model_dump(mode="json")
 
@@ -110,6 +115,8 @@ class SessionStore(Protocol):
 
     async def append(self, identifier: str, entry: SessionEntry) -> None: ...
 
+    async def close(self, identifier: str) -> None: ...
+
 
 class MemorySessionStore:
     def __init__(self) -> None:
@@ -135,12 +142,16 @@ class MemorySessionStore:
             raise ValueError(f"duplicate session entry id: {entry.id}")
         entries.append(entry)
 
+    async def close(self, identifier: str) -> None:
+        del identifier
+
 
 class JsonlSessionStore:
     """One JSON object per line; header is durable metadata, remainder is an append-only entry log."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        self._lock_handles: dict[str, TextIO] = {}
 
     def _path(self, identifier: str) -> Path:
         return self.root / f"{identifier}.jsonl"
@@ -151,17 +162,35 @@ class JsonlSessionStore:
         if path.exists():
             raise ValueError(f"session already exists: {identifier}")
         header = {"type": "session", "version": 2, "id": identifier, "created_at": created_at}
-        with path.open("x", encoding="utf-8") as handle:
+        handle = path.open("x+", encoding="utf-8")
+        try:
+            self._acquire(identifier, handle)
             handle.write(json.dumps(header, ensure_ascii=False) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
+        except Exception:
+            handle.close()
+            self._lock_handles.pop(identifier, None)
+            raise
         return []
 
     async def load(self, identifier: str) -> list[SessionEntry]:
         path = self._path(identifier)
         if not path.exists():
             raise KeyError(f"session not found: {identifier}")
-        lines = path.read_text(encoding="utf-8").splitlines()
+        handle = path.open("r+", encoding="utf-8")
+        try:
+            self._acquire(identifier, handle)
+            handle.seek(0)
+            lines = handle.read().splitlines()
+            return self._parse_lines(identifier, lines)
+        except Exception:
+            handle.close()
+            self._lock_handles.pop(identifier, None)
+            raise
+
+    @staticmethod
+    def _parse_lines(identifier: str, lines: list[str]) -> list[SessionEntry]:
         if not lines:
             raise ValueError("session is missing header")
         header = json.loads(lines[0])
@@ -188,10 +217,28 @@ class JsonlSessionStore:
         path = self._path(identifier)
         if not path.exists():
             raise KeyError(f"session not found: {identifier}")
+        if identifier not in self._lock_handles:
+            raise SessionLockedError(f"session is not open for writing: {identifier}")
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
+
+    async def close(self, identifier: str) -> None:
+        handle = self._lock_handles.pop(identifier, None)
+        if handle is None:
+            return
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+    def _acquire(self, identifier: str, handle: TextIO) -> None:
+        if identifier in self._lock_handles:
+            raise SessionLockedError(f"session is already open for writing: {identifier}")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise SessionLockedError(f"session is already open for writing: {identifier}") from error
+        self._lock_handles[identifier] = handle
 
 
 class Session:
@@ -203,6 +250,7 @@ class Session:
         if len(self._by_id) != len(entries):
             raise ValueError("session contains duplicate entry ids")
         self._leaf_id = self._derive_leaf()
+        self._closed = False
 
     def _derive_leaf(self) -> str | None:
         leaf: str | None = None
@@ -287,6 +335,12 @@ class Session:
     async def append_custom(self, custom_type: str, data: Any = None) -> str:
         return await self._append("custom", {"custom_type": custom_type, "data": data})
 
+    async def close(self) -> None:
+        if self._closed:
+            return
+        await self._store.close(self.id)
+        self._closed = True
+
     async def move_to(self, entry_id: str | None) -> None:
         if entry_id is not None and entry_id not in self._by_id:
             raise KeyError(f"entry not found: {entry_id}")
@@ -366,6 +420,8 @@ class Session:
         return None
 
     async def _append(self, entry_type: str, payload: dict[str, Any]) -> str:
+        if self._closed:
+            raise RuntimeError(f"session is closed: {self.id}")
         identifier = uuid.uuid4().hex[:12]
         entry = SessionEntry(identifier, self._leaf_id, time.time(), entry_type, payload)
         await self._store.append(self.id, entry)

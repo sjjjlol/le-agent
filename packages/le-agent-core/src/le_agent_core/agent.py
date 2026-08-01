@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from le_agent_ai.errors import ErrorCode
 from le_agent_ai.models import AgentMessage, AssistantMessage, TextContent, UserMessage
 from le_agent_ai.stream import AsyncEventStream
 
@@ -22,6 +23,7 @@ class AgentState:
     is_streaming: bool = False
     streaming_message: AssistantMessage | None = None
     error_message: str | None = None
+    error_code: ErrorCode | None = None
 
 
 class Agent:
@@ -94,6 +96,7 @@ class Agent:
                 if event.type == "message_end" and isinstance(event.message, AssistantMessage):
                     self.state.streaming_message = None
                     self.state.error_message = event.message.error_message
+                    self.state.error_code = event.message.error_code
                 for listener in list(self._listeners):
                     result = listener(event)
                     if isinstance(result, Awaitable):

@@ -9,6 +9,7 @@ from typing import Any, cast
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 
+from .errors import normalize_error_code
 from .models import (
     AssistantContent,
     AssistantMessage,
@@ -193,14 +194,24 @@ class OpenAICompatibleProvider:
                 stream.push(StreamEvent(type="done", message=message, usage=usage))
                 stream.finish(message)
             except asyncio.CancelledError:
-                message = AssistantMessage(content=[], provider=model.provider, model=model.id, stop_reason="aborted")
-                stream.push(StreamEvent(type="error", error_message="request aborted", message=message))
+                message = AssistantMessage(
+                    content=[], provider=model.provider, model=model.id, stop_reason="aborted", error_code="aborted"
+                )
+                stream.push(
+                    StreamEvent(type="error", error_message="request aborted", error_code="aborted", message=message)
+                )
                 stream.finish(message)
             except Exception as error:  # provider failures are data, not loop exceptions
+                error_code = normalize_error_code(error)
                 message = AssistantMessage(
-                    content=[], provider=model.provider, model=model.id, stop_reason="error", error_message=str(error)
+                    content=[],
+                    provider=model.provider,
+                    model=model.id,
+                    stop_reason="error",
+                    error_message=str(error),
+                    error_code=error_code,
                 )
-                stream.push(StreamEvent(type="error", error_message=str(error), message=message))
+                stream.push(StreamEvent(type="error", error_message=str(error), error_code=error_code, message=message))
                 stream.finish(message)
 
         asyncio.create_task(run())
@@ -301,14 +312,24 @@ class AnthropicProvider:
                 stream.push(StreamEvent(type="done", message=message, usage=usage))
                 stream.finish(message)
             except asyncio.CancelledError:
-                message = AssistantMessage(content=[], provider=model.provider, model=model.id, stop_reason="aborted")
-                stream.push(StreamEvent(type="error", error_message="request aborted", message=message))
+                message = AssistantMessage(
+                    content=[], provider=model.provider, model=model.id, stop_reason="aborted", error_code="aborted"
+                )
+                stream.push(
+                    StreamEvent(type="error", error_message="request aborted", error_code="aborted", message=message)
+                )
                 stream.finish(message)
             except Exception as error:
+                error_code = normalize_error_code(error)
                 message = AssistantMessage(
-                    content=[], provider=model.provider, model=model.id, stop_reason="error", error_message=str(error)
+                    content=[],
+                    provider=model.provider,
+                    model=model.id,
+                    stop_reason="error",
+                    error_message=str(error),
+                    error_code=error_code,
                 )
-                stream.push(StreamEvent(type="error", error_message=str(error), message=message))
+                stream.push(StreamEvent(type="error", error_message=str(error), error_code=error_code, message=message))
                 stream.finish(message)
 
         asyncio.create_task(run())

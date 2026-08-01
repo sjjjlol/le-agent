@@ -90,6 +90,9 @@ class LeAgentApp(App[None]):
         if self.initial_prompt:
             self.run_worker(self.runtime.prompt(self.initial_prompt), exclusive=False)
 
+    async def on_unmount(self) -> None:
+        await self.runtime.close()
+
     async def _approve(self, call: ToolCallContent, args: BaseModel) -> str:
         return await self.push_screen_wait(ApprovalScreen(call.name, str(args.model_dump())))
 

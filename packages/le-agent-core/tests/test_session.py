@@ -5,7 +5,13 @@ import pytest
 from le_agent_ai import TextContent, UserMessage
 from le_agent_ai.models import AgentMessage
 from le_agent_core import BranchDivergence, SessionTreeNode
-from le_agent_core.session import JsonlSessionStore, MemorySessionStore, SessionEntry, SessionRepository
+from le_agent_core.session import (
+    JsonlSessionStore,
+    MemorySessionStore,
+    SessionEntry,
+    SessionLockedError,
+    SessionRepository,
+)
 
 
 def _user_texts(messages: list[AgentMessage]) -> list[str]:
@@ -82,6 +88,7 @@ async def test_jsonl_store_round_trips_session_entries(tmp_path: Path) -> None:
     repository = SessionRepository(JsonlSessionStore(tmp_path))
     session = await repository.create()
     await session.append_message(UserMessage(content=[TextContent(text="persist me")]))
+    await session.close()
 
     reopened = await repository.open(session.id)
 
@@ -134,7 +141,21 @@ async def test_jsonl_store_recovers_from_a_torn_final_append(tmp_path: Path) -> 
     session = await repository.create()
     await session.append_message(UserMessage(content=[TextContent(text="durable")]))
     (tmp_path / f"{session.id}.jsonl").open("a", encoding="utf-8").write('{"id":')
+    await session.close()
 
     reopened = await repository.open(session.id)
 
     assert _user_texts(await reopened.build_context_messages()) == ["durable"]
+
+
+@pytest.mark.asyncio
+async def test_jsonl_session_has_one_writer_until_the_owner_closes(tmp_path: Path) -> None:
+    first = await SessionRepository(JsonlSessionStore(tmp_path)).create()
+
+    with pytest.raises(SessionLockedError, match="already open"):
+        await SessionRepository(JsonlSessionStore(tmp_path)).open(first.id)
+
+    await first.close()
+    reopened = await SessionRepository(JsonlSessionStore(tmp_path)).open(first.id)
+    await reopened.append_message(UserMessage(content=[TextContent(text="after release")]))
+    await reopened.close()

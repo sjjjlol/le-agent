@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from .errors import ErrorCode
 from .models import (
     AssistantContent,
     AssistantMessage,
@@ -25,6 +26,7 @@ class ScriptedResponse:
     tool_calls: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
     stop_reason: str = "stop"
     error_message: str | None = None
+    error_code: ErrorCode | None = None
 
     @classmethod
     def text(cls, value: str) -> "ScriptedResponse":
@@ -76,10 +78,18 @@ class FauxProvider:
                 model=model.id,
                 stop_reason=stop_reason,  # type: ignore[arg-type]
                 error_message=response.error_message,
+                error_code=response.error_code,
                 usage=Usage(output_tokens=len(response.text_value) // 4 + 1),
             )
             if response.error_message:
-                stream.push(StreamEvent(type="error", error_message=response.error_message, message=message))
+                stream.push(
+                    StreamEvent(
+                        type="error",
+                        error_message=response.error_message,
+                        error_code=response.error_code,
+                        message=message,
+                    )
+                )
             stream.push(StreamEvent(type="done", message=message, usage=message.usage))
             stream.finish(message)
 

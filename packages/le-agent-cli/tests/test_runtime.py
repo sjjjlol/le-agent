@@ -69,3 +69,22 @@ async def test_runtime_controller_new_and_resume_use_current_model() -> None:
         RuntimeRequest(model_name="one", resume=None),
         RuntimeRequest(model_name="one", resume="saved-session"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_replacement_and_close_release_owned_sessions() -> None:
+    initial = await _bundle("one", "unused")
+    replacement = await _bundle("one", "unused")
+
+    async def factory(_request: RuntimeRequest) -> AppBundle:
+        return replacement
+
+    controller = RuntimeController(initial, factory)
+    await controller.new_session()
+
+    with pytest.raises(RuntimeError, match="session is closed"):
+        await initial.session.append_session_info("closed")
+
+    await controller.close()
+    with pytest.raises(RuntimeError, match="session is closed"):
+        await replacement.session.append_session_info("closed")
