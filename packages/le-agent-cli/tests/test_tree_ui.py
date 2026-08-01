@@ -3,6 +3,7 @@ from le_agent_ai import AssistantMessage, TextContent, ToolCallContent, ToolResu
 from le_agent_cli.ui.theme import APP_CSS
 from le_agent_cli.ui.tree import SessionTreeModel, TreeFilter, TreeNavigator
 from le_agent_core.session import MemorySessionStore, Session, SessionRepository
+from rich.text import Text
 from textual.app import App
 from textual.widgets import OptionList, Static
 
@@ -107,3 +108,25 @@ async def test_tree_navigator_filters_and_adapts_preview_to_terminal_width(
         await pilot.click("#tree-search")
         await pilot.press(*"missing")
         assert not screen.query_one("#tree-options", OptionList).option_count
+
+
+@pytest.mark.asyncio
+async def test_tree_navigator_treats_tool_summaries_as_literal_text() -> None:
+    session = await SessionRepository(MemorySessionStore()).create()
+    command = 'grep -RIn --exclude-dir=.git -E "memory|Memory|memories|persist" .'
+    await session.append_message(
+        ToolResultMessage(
+            tool_call_id="bash-markup",
+            tool_name="bash",
+            content=[TextContent(text="match")],
+            details={"command": command},
+        )
+    )
+    model = await SessionTreeModel.from_session(session)
+    app = TreeHostApp(session, model)
+
+    async with app.run_test(size=(100, 24)):
+        options = app.screen.query_one("#tree-options", OptionList)
+        prompt = options.get_option_at_index(0).prompt
+        assert isinstance(prompt, Text)
+        assert '[bash: grep -RIn --exclude-dir=.git -E "memory|Memory' in prompt.plain

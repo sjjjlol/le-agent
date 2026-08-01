@@ -38,7 +38,10 @@ class Composer(TextArea):
         elif key == "alt+enter":
             self._submit("follow_up")
         elif key == "enter" and self.text.lstrip().startswith("/"):
-            self.post_message(self.CompletionRequested(execute_if_exact=True))
+            if len(self.text.lstrip().split(maxsplit=1)) > 1:
+                self._submit("steer")
+            else:
+                self.post_message(self.CompletionRequested(execute_if_exact=True))
         elif key == "enter":
             self._submit("steer")
         elif key == "tab" and self.text.lstrip().startswith("/"):

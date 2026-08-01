@@ -301,7 +301,7 @@ class TreeNavigator(ModalScreen[TreeSelection | None]):
         self._rows = self.model.rows(self.tree_filter, query=search, collapsed=frozenset(self.collapsed))
         options = self.query_one("#tree-options", OptionList)
         options.clear_options()
-        options.add_options(Option(row.display, id=row.entry_id) for row in self._rows)
+        options.add_options(Option(Text(row.display), id=row.entry_id) for row in self._rows)
         options.highlighted = 0 if self._rows else None
 
 

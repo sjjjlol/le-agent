@@ -233,6 +233,7 @@ class LeAgentApp(App[None]):
         bundle = self.runtime.bundle
         bundle.policy.approval = self._approve
         self.query_one(BrandHeader).refresh_bundle(bundle)
+        self._refresh_status()
         api_key_env = bundle.api_key_env
         if api_key_env and not bundle.api_key_available and api_key_env not in self._warned_api_keys:
             self._warned_api_keys.add(api_key_env)

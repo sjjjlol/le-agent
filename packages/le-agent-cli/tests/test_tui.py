@@ -11,7 +11,7 @@ from le_agent_cli.ui.app import LeAgentApp
 from le_agent_cli.ui.composer import Composer
 from le_agent_cli.ui.header import BrandHeader
 from le_agent_cli.ui.palette import CommandPalette
-from le_agent_cli.ui.status import ContextUsage, context_usage
+from le_agent_cli.ui.status import ContextUsage, StatusBar, context_usage
 from le_agent_cli.ui.transcript import AssistantMessageView, ToolCard, Transcript, WaitingMessage
 from le_agent_core import AgentLoopConfig
 from le_agent_core.harness import AgentHarness
@@ -113,6 +113,37 @@ async def test_composer_distinguishes_steer_follow_up_and_newline() -> None:
         await pilot.press("alt+enter")
 
         assert app.submissions == [("a\nb", "steer"), ("later", "follow_up")]
+
+
+@pytest.mark.asyncio
+async def test_composer_submits_slash_command_with_arguments() -> None:
+    app = ComposerTestApp()
+
+    async with app.run_test(size=(80, 12)) as pilot:
+        composer = app.query_one(Composer)
+        composer.focus()
+        await pilot.press(*"/name test01", "enter")
+
+        assert app.submissions == [("/name test01", "steer")]
+        assert composer.text == ""
+
+
+@pytest.mark.asyncio
+async def test_name_command_from_composer_updates_session_and_header() -> None:
+    app = LeAgentApp(await _bundle())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        composer = app.query_one(Composer)
+        composer.focus()
+        await pilot.press(*"/name test01", "enter")
+        await pilot.pause(0.1)
+
+        assert app.runtime.bundle.session_name == "test01"
+        assert "test01" in app.query_one(BrandHeader).renderable.plain
+        assert any(
+            "会话已命名：test01" in str(widget.render())
+            for widget in app.query(".system-message")
+        )
 
 
 @pytest.mark.asyncio
@@ -238,6 +269,31 @@ async def test_command_configuration_errors_are_rendered_in_transcript(error: Ex
     async with app.run_test(size=(80, 24)):
         await app._execute_command("/fail")
         assert any(str(error) in str(widget.render()) for widget in app.query(".error-message"))
+
+
+@pytest.mark.asyncio
+async def test_command_mutations_refresh_status_bar_immediately() -> None:
+    registry = CommandRegistry()
+
+    async def mutate(_argument, context):
+        from le_agent_cli.commands import CommandResult
+
+        context.runtime.bundle.model_name = "updated-model"
+        modes = list(type(context.runtime.bundle.policy.mode))
+        context.runtime.bundle.policy.mode = modes[-1]
+        return CommandResult()
+
+    registry.register(CommandSpec("mutate", "mutate runtime", handler=mutate))
+    app = LeAgentApp(await _bundle(), registry=registry)
+
+    async with app.run_test(size=(100, 24)):
+        status = app.query_one("#status", StatusBar)
+        assert "updated-model" not in status.content
+
+        await app._execute_command("/mutate")
+
+        assert "updated-model" in status.content
+        assert app.runtime.bundle.policy.mode.value in status.content
 
 
 @pytest.mark.asyncio
