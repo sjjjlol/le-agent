@@ -16,3 +16,4 @@ jobs:
       - run: uv run ruff check .
       - run: uv run mypy packages
       - run: uv run pytest --cov
+      - run: uv run coverage report --include="*/le_agent_core/*" --fail-under=90

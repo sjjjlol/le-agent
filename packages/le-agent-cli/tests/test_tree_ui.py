@@ -88,7 +88,7 @@ class TreeHostApp(App[None]):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("width", "preview_visible"), [(120, True), (40, False)])
+@pytest.mark.parametrize(("width", "preview_visible"), [(120, True), (80, True), (40, False)])
 async def test_tree_navigator_filters_and_adapts_preview_to_terminal_width(
     width: int, preview_visible: bool
 ) -> None:

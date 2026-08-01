@@ -182,15 +182,25 @@ class JsonlSessionStore:
         try:
             self._acquire(identifier, handle)
             handle.seek(0)
-            lines = handle.read().splitlines()
-            return self._parse_lines(identifier, lines)
+            raw = handle.read()
+            raw_lines = raw.splitlines(keepends=True)
+            lines = [line.rstrip("\r\n") for line in raw_lines]
+            entries, recovered_tail = self._parse_lines(identifier, lines)
+            if recovered_tail:
+                invalid_index = max(index for index, line in enumerate(lines) if line.strip())
+                handle.seek(0)
+                handle.write("".join(raw_lines[:invalid_index]))
+                handle.truncate()
+                handle.flush()
+                os.fsync(handle.fileno())
+            return entries
         except Exception:
             handle.close()
             self._lock_handles.pop(identifier, None)
             raise
 
     @staticmethod
-    def _parse_lines(identifier: str, lines: list[str]) -> list[SessionEntry]:
+    def _parse_lines(identifier: str, lines: list[str]) -> tuple[list[SessionEntry], bool]:
         if not lines:
             raise ValueError("session is missing header")
         header = json.loads(lines[0])
@@ -201,17 +211,19 @@ class JsonlSessionStore:
         ):
             raise ValueError("invalid session header")
         entries: list[SessionEntry] = []
+        recovered_tail = False
         nonempty = [line for line in lines[1:] if line.strip()]
         for index, line in enumerate(nonempty):
             try:
                 entries.append(SessionEntry.from_dict(json.loads(line)))
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 if index == len(nonempty) - 1:
+                    recovered_tail = True
                     break  # a process may have died while appending its final line
                 raise ValueError("invalid session entry before end of JSONL log") from error
         if len({entry.id for entry in entries}) != len(entries):
             raise ValueError("session contains duplicate entry ids")
-        return entries
+        return entries, recovered_tail
 
     async def append(self, identifier: str, entry: SessionEntry) -> None:
         path = self._path(identifier)

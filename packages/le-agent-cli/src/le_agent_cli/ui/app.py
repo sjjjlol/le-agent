@@ -128,18 +128,33 @@ class LeAgentApp(App[None]):
     def on_composer_completion_moved(self, event: Composer.CompletionMoved) -> None:
         self.query_one(CommandPalette).move(event.direction)
 
-    def on_composer_completion_requested(self, _event: Composer.CompletionRequested) -> None:
+    def on_composer_completion_requested(self, event: Composer.CompletionRequested) -> None:
         palette = self.query_one(CommandPalette)
         selected = palette.selected_name()
         if selected:
-            self.query_one(Composer).text = f"/{selected} "
+            composer = self.query_one(Composer)
+            name = composer.text.strip().removeprefix("/")
+            if event.execute_if_exact and name == selected:
+                composer.text = ""
+                palette.display = False
+                self._command_worker = self.run_worker(self._execute_command(f"/{selected}"), exclusive=False)
+                return
+            composer.text = f"/{selected} "
         palette.display = False
 
     async def on_composer_submitted(self, event: Composer.Submitted) -> None:
-        self.query_one(CommandPalette).display = False
+        palette = self.query_one(CommandPalette)
         if event.text.startswith("/"):
+            name, separator, _argument = event.text.removeprefix("/").partition(" ")
+            selected = palette.selected_name()
+            if palette.display and selected and not separator and name != selected:
+                self.query_one(Composer).text = f"/{selected} "
+                palette.display = False
+                return
+            palette.display = False
             self._command_worker = self.run_worker(self._execute_command(event.text), exclusive=False)
             return
+        palette.display = False
         agent = self.runtime.bundle.harness.agent
         if agent and agent.state.is_streaming:
             if event.delivery == "follow_up":
@@ -199,6 +214,7 @@ class LeAgentApp(App[None]):
         return await self.push_screen_wait(SearchableSelector("权限设置", items, current=current))
 
     async def _show_tree(self) -> str:
+        await self.runtime.wait_for_idle()
         model = await SessionTreeModel.from_session(self.runtime.bundle.session)
         selection = await self.push_screen_wait(TreeNavigator(self.runtime.bundle.session, model))
         if selection is None:
@@ -220,6 +236,10 @@ class LeAgentApp(App[None]):
         self.query_one(StatusBar).refresh_bundle(self.runtime.bundle, queue_size=len(self._queue))
 
     def action_abort(self) -> None:
+        palette = self.query_one(CommandPalette)
+        if palette.display:
+            palette.display = False
+            return
         agent = self.runtime.bundle.harness.agent
         if agent and agent.state.is_streaming:
             self.runtime.abort()

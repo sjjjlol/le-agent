@@ -134,10 +134,20 @@ async def test_context_overflow_compacts_and_retries_once_on_a_new_branch() -> N
         compaction_settings=CompactionSettings(reserve_tokens=20, keep_recent_tokens=5),
         summarizer=summarize,
     )
+    agent = await harness.restore()
+    forwarded: list[str] = []
+
+    async def capture(event) -> None:
+        if event.type == "message_end" and getattr(event.message, "role", None) == "assistant":
+            forwarded.append(event.message.text)
+
+    agent.subscribe(capture)
 
     await harness.prompt("continue")
 
     assert len(provider.requests) == 2
+    assert forwarded == ["", "recovered"]
+    assert harness.agent is agent
     assert len(summary_requests) == 1
     context = await session.build_context_messages()
     assert [message.role for message in context] == ["compaction_summary", "user", "assistant"]

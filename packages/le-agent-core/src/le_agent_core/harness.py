@@ -184,8 +184,12 @@ class AgentHarness:
                 await self.session.move_to(old_leaf)
                 self.agent = failed_agent
                 return False
-            retry_agent = await self.restore()
-            await retry_agent.continue_run()
+            failed_agent.state = AgentState(
+                system_prompt=self.system_prompt,
+                messages=await self.session.build_context_messages(),
+            )
+            self.agent = failed_agent
+            await failed_agent.continue_run()
         except Exception:
             if await self.session.leaf_id() == retry_from_id:
                 await self.session.move_to(old_leaf)

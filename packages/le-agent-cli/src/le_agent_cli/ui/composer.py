@@ -19,7 +19,9 @@ class Composer(TextArea):
             self.delivery = delivery
 
     class CompletionRequested(Message):
-        pass
+        def __init__(self, *, execute_if_exact: bool = False) -> None:
+            super().__init__()
+            self.execute_if_exact = execute_if_exact
 
     class CompletionMoved(Message):
         def __init__(self, direction: int) -> None:
@@ -35,6 +37,8 @@ class Composer(TextArea):
             self.insert("\n")
         elif key == "alt+enter":
             self._submit("follow_up")
+        elif key == "enter" and self.text.lstrip().startswith("/"):
+            self.post_message(self.CompletionRequested(execute_if_exact=True))
         elif key == "enter":
             self._submit("steer")
         elif key == "tab" and self.text.lstrip().startswith("/"):

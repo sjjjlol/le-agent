@@ -88,3 +88,20 @@ async def test_runtime_replacement_and_close_release_owned_sessions() -> None:
     await controller.close()
     with pytest.raises(RuntimeError, match="session is closed"):
         await replacement.session.append_session_info("closed")
+
+
+@pytest.mark.asyncio
+async def test_resuming_current_session_is_an_idle_noop() -> None:
+    initial = await _bundle("one", "unused")
+    requests: list[RuntimeRequest] = []
+
+    async def factory(request: RuntimeRequest) -> AppBundle:
+        requests.append(request)
+        return await _bundle("one", "unused")
+
+    controller = RuntimeController(initial, factory)
+    await controller.resume(initial.session.id)
+
+    assert requests == []
+    assert controller.bundle is initial
+    await controller.close()

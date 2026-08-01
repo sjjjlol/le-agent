@@ -72,7 +72,12 @@ class RuntimeController:
         await self._replace(RuntimeRequest(model_name=self.bundle.model_name))
 
     async def resume(self, identifier: str) -> None:
+        if identifier == self.bundle.session.id:
+            return
         await self._replace(RuntimeRequest(model_name=self.bundle.model_name, resume=identifier))
+
+    async def wait_for_idle(self) -> None:
+        await self._wait_for_idle()
 
     async def reload_context(self) -> None:
         """Rebuild AgentState after compaction or pointer navigation and rebind event forwarding."""

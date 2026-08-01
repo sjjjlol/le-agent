@@ -146,6 +146,12 @@ async def test_jsonl_store_recovers_from_a_torn_final_append(tmp_path: Path) -> 
     reopened = await repository.open(session.id)
 
     assert _user_texts(await reopened.build_context_messages()) == ["durable"]
+    await reopened.append_message(UserMessage(content=[TextContent(text="after recovery")]))
+    await reopened.close()
+
+    opened_again = await repository.open(session.id)
+    assert _user_texts(await opened_again.build_context_messages()) == ["durable", "after recovery"]
+    await opened_again.close()
 
 
 @pytest.mark.asyncio

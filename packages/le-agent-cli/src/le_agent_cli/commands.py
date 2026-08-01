@@ -95,13 +95,22 @@ class CommandRegistry:
     def suggest(self, query: str = "") -> list[CommandSpec]:
         normalized = query.lower().strip().removeprefix("/")
         visible = [command for command in self._commands.values() if not command.hidden]
-        if normalized:
-            visible = [
-                command
-                for command in visible
-                if normalized in command.name.lower() or normalized in command.description.lower()
-            ]
-        return sorted(visible, key=lambda command: (-self._priority(command.source), command.name))
+        scored: list[tuple[int, CommandSpec]] = []
+        for command in visible:
+            if not normalized:
+                scored.append((0, command))
+                continue
+            candidates = [command.name, *command.aliases, command.description]
+            scores = [score for value in candidates if (score := self._fuzzy_score(normalized, value)) is not None]
+            if scores:
+                scored.append((min(scores), command))
+        return [
+            command
+            for _, command in sorted(
+                scored,
+                key=lambda item: (-self._priority(item[1].source), item[0], item[1].name),
+            )
+        ]
 
     async def execute(self, text: str, context: CommandContext) -> CommandResult:
         name, _, argument = text.strip().removeprefix("/").partition(" ")
@@ -117,6 +126,21 @@ class CommandRegistry:
     @staticmethod
     def _priority(source: CommandSource) -> int:
         return {"skill": 0, "extension": 1, "builtin": 2}[source]
+
+    @staticmethod
+    def _fuzzy_score(query: str, value: str) -> int | None:
+        target = value.casefold()
+        if query in target:
+            return target.index(query)
+        position = -1
+        gaps = 0
+        for character in query:
+            found = target.find(character, position + 1)
+            if found < 0:
+                return None
+            gaps += found - position - 1
+            position = found
+        return 100 + gaps
 
 
 def _persistent_session(context: CommandContext) -> CommandAvailability:
@@ -176,6 +200,7 @@ def create_builtin_registry() -> CommandRegistry:
         return CommandResult(message=message)
 
     async def compact_command(argument: str, context: CommandContext) -> CommandResult:
+        await context.runtime.wait_for_idle()
         changed = await context.runtime.bundle.harness.compact(instructions=argument or None)
         if changed:
             await context.runtime.reload_context()

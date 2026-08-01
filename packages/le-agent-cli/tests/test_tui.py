@@ -64,6 +64,23 @@ async def test_default_tui_registry_exposes_builtin_commands_on_slash() -> None:
         assert app.query_one(CommandPalette).option_count == len(names)
 
 
+@pytest.mark.asyncio
+async def test_palette_fuzzy_enter_completion_and_escape_dismissal() -> None:
+    app = LeAgentApp(await _bundle())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        composer = app.query_one(Composer)
+        composer.focus()
+        await pilot.press(*"/mdl")
+        palette = app.query_one(CommandPalette)
+        assert palette.option_count == 1
+
+        await pilot.press("enter")
+        assert composer.text == "/model "
+        await pilot.press("escape")
+        assert not palette.display
+
+
 class ComposerTestApp(App[None]):
     def __init__(self) -> None:
         super().__init__()
@@ -105,7 +122,7 @@ async def test_transcript_coalesces_stream_deltas_and_updates_tool_card_in_place
         await app._render_event(
             AgentEvent(type="message_update", assistant_event=StreamEvent(type="text_delta", delta="lo"))
         )
-        await pilot.pause(0.05)
+        await pilot.pause(0.1)
 
         assistant = app.query_one(AssistantMessageView)
         assert "hello" in assistant.renderable.plain
@@ -145,3 +162,41 @@ async def test_status_context_uses_latest_provider_usage_plus_trailing_messages(
     used, window, percent = context_usage(bundle)
 
     assert (used, window, percent) == (701, 1000, 70)
+
+
+@pytest.mark.asyncio
+async def test_tree_command_waits_for_idle_before_opening_navigator(monkeypatch) -> None:
+    app = LeAgentApp(await _bundle())
+    order: list[str] = []
+
+    async def wait_for_idle() -> None:
+        order.append("idle")
+
+    async def push_screen(_screen):
+        order.append("screen")
+        return None
+
+    monkeypatch.setattr(app.runtime, "wait_for_idle", wait_for_idle)
+    monkeypatch.setattr(app, "push_screen_wait", push_screen)
+
+    assert await app._show_tree() == "已取消会话回溯"
+    assert order == ["idle", "screen"]
+    await app.runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [40, 80, 120])
+async def test_main_tui_layout_and_session_command_work_at_required_widths(width: int) -> None:
+    app = LeAgentApp(await _bundle())
+
+    async with app.run_test(size=(width, 24)) as pilot:
+        assert app.query_one(Transcript).display
+        assert app.query_one(Composer).display
+        await pilot.click("#composer")
+        await pilot.press(*"/session", "enter")
+        await pilot.pause()
+        assert any("会话：" in str(widget.render()) for widget in app.query(".system-message"))
+
+        previous = app.runtime.bundle.policy.mode
+        app.action_cycle_permission()
+        assert app.runtime.bundle.policy.mode is not previous

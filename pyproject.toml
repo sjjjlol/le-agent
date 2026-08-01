@@ -32,6 +32,10 @@ addopts = "-ra"
 branch = true
 source = ["le_agent_ai", "le_agent_core", "le_agent_cli"]
 
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"
