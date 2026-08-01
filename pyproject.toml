@@ -1,0 +1,49 @@
+[project]
+name = "le-agent-workspace"
+version = "0.1.0"
+description = "Python reimplementation of pi-style coding agent architecture"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "mypy>=1.13",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "pytest-cov>=6.0",
+  "ruff>=0.8",
+  "types-PyYAML>=6.0",
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+le-agent-ai = { workspace = true }
+le-agent-core = { workspace = true }
+le-agent-cli = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["packages"]
+asyncio_mode = "auto"
+addopts = "-ra"
+
+[tool.coverage.run]
+branch = true
+source = ["le_agent_ai", "le_agent_core", "le_agent_cli"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+exclude = ["build"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+explicit_package_bases = true
+mypy_path = ["packages/le-agent-ai/src", "packages/le-agent-core/src", "packages/le-agent-cli/src"]
+exclude = "(^|/)(build|tests)/"
