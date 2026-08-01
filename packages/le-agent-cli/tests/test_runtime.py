@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from le_agent_ai import FauxProvider, Model, ScriptedResponse
 from le_agent_cli.app import AppBundle
@@ -104,4 +106,52 @@ async def test_resuming_current_session_is_an_idle_noop() -> None:
 
     assert requests == []
     assert controller.bundle is initial
+    await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_state_change_lock_cannot_overlap_a_new_prompt() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    acquired = asyncio.Event()
+    session = await SessionRepository(MemorySessionStore()).create()
+
+    class Agent:
+        def subscribe(self, _listener):
+            return lambda: None
+
+        async def wait_for_idle(self) -> None:
+            return None
+
+    class Harness:
+        agent = None
+
+        async def restore(self):
+            self.agent = Agent()
+            return self.agent
+
+        async def prompt(self, _text: str) -> None:
+            started.set()
+            await release.wait()
+
+    bundle = AppBundle(Harness(), PermissionController(), {}, session, "test")  # type: ignore[arg-type]
+
+    async def factory(_request: RuntimeRequest) -> AppBundle:
+        return bundle
+
+    controller = RuntimeController(bundle, factory)
+    prompt_task = asyncio.create_task(controller.prompt("running"))
+    await started.wait()
+
+    async def mutate() -> None:
+        async with controller.state_change():
+            acquired.set()
+
+    mutation_task = asyncio.create_task(mutate())
+    await asyncio.sleep(0)
+    assert not acquired.is_set()
+    release.set()
+    await prompt_task
+    await mutation_task
+    assert acquired.is_set()
     await controller.close()

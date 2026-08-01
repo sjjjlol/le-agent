@@ -200,10 +200,7 @@ def create_builtin_registry() -> CommandRegistry:
         return CommandResult(message=message)
 
     async def compact_command(argument: str, context: CommandContext) -> CommandResult:
-        await context.runtime.wait_for_idle()
-        changed = await context.runtime.bundle.harness.compact(instructions=argument or None)
-        if changed:
-            await context.runtime.reload_context()
+        changed = await context.runtime.compact(argument or None)
         return CommandResult(message="上下文压缩完成" if changed else "当前上下文无需压缩")
 
     async def skills_command(_argument: str, context: CommandContext) -> CommandResult:

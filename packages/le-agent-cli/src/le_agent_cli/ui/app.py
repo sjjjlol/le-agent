@@ -214,19 +214,19 @@ class LeAgentApp(App[None]):
         return await self.push_screen_wait(SearchableSelector("权限设置", items, current=current))
 
     async def _show_tree(self) -> str:
-        await self.runtime.wait_for_idle()
-        model = await SessionTreeModel.from_session(self.runtime.bundle.session)
-        selection = await self.push_screen_wait(TreeNavigator(self.runtime.bundle.session, model))
-        if selection is None:
-            return "已取消会话回溯"
-        choice = await self.push_screen_wait(NavigationChoiceScreen())
-        if choice is NavigationChoice.CANCEL:
-            return "已取消会话回溯"
-        result = await self.runtime.bundle.harness.navigate_tree(
-            selection.entry_id,
-            summarize=choice is NavigationChoice.SUMMARIZE,
-        )
-        await self.runtime.reload_context()
+        async with self.runtime.state_change() as mutation:
+            model = await SessionTreeModel.from_session(self.runtime.bundle.session)
+            selection = await self.push_screen_wait(TreeNavigator(self.runtime.bundle.session, model))
+            if selection is None:
+                return "已取消会话回溯"
+            choice = await self.push_screen_wait(NavigationChoiceScreen())
+            if choice is NavigationChoice.CANCEL:
+                return "已取消会话回溯"
+            result = await self.runtime.bundle.harness.navigate_tree(
+                selection.entry_id,
+                summarize=choice is NavigationChoice.SUMMARIZE,
+            )
+            mutation.reload_context = True
         self._refresh_status()
         if result.summary_entry_id:
             return f"已带摘要回溯到：{selection.entry_id}"

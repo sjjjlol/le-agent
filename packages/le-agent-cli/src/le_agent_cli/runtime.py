@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 from le_agent_core.loop import AgentEvent
@@ -24,6 +25,11 @@ class RuntimeRequest:
 RuntimeFactory = Callable[[RuntimeRequest], Awaitable[AppBundle]]
 
 
+@dataclass(slots=True)
+class RuntimeMutation:
+    reload_context: bool = False
+
+
 class RuntimeController:
     def __init__(self, initial: AppBundle, factory: RuntimeFactory) -> None:
         self.bundle = initial
@@ -31,6 +37,7 @@ class RuntimeController:
         self._listeners: list[RuntimeListener] = []
         self._agent_unsubscribe: Callable[[], None] | None = None
         self._started = False
+        self._state_lock = asyncio.Lock()
 
     def subscribe(self, listener: RuntimeListener) -> Callable[[], None]:
         self._listeners.append(listener)
@@ -41,6 +48,10 @@ class RuntimeController:
         return unsubscribe
 
     async def start(self) -> None:
+        async with self._state_lock:
+            await self._start_unlocked()
+
+    async def _start_unlocked(self) -> None:
         if self._started:
             return
         agent = await self.bundle.harness.restore()
@@ -48,8 +59,9 @@ class RuntimeController:
         self._started = True
 
     async def prompt(self, text: str) -> None:
-        await self.start()
-        await self.bundle.harness.prompt(text)
+        async with self._state_lock:
+            await self._start_unlocked()
+            await self.bundle.harness.prompt(text)
 
     def steer(self, text: str) -> None:
         if self.bundle.harness.agent:
@@ -64,38 +76,64 @@ class RuntimeController:
             self.bundle.harness.agent.abort()
 
     async def switch_model(self, model_name: str) -> None:
-        await self._replace(RuntimeRequest(model_name=model_name, session=self.bundle.session))
-        model = self.bundle.harness.config.model
-        await self.bundle.session.append_model_change(model.provider, model.id)
+        async with self._state_lock:
+            await self._replace(RuntimeRequest(model_name=model_name, session=self.bundle.session))
+            model = self.bundle.harness.config.model
+            await self.bundle.session.append_model_change(model.provider, model.id)
 
     async def new_session(self) -> None:
-        await self._replace(RuntimeRequest(model_name=self.bundle.model_name))
+        async with self._state_lock:
+            await self._replace(RuntimeRequest(model_name=self.bundle.model_name))
 
     async def resume(self, identifier: str) -> None:
-        if identifier == self.bundle.session.id:
-            return
-        await self._replace(RuntimeRequest(model_name=self.bundle.model_name, resume=identifier))
+        async with self._state_lock:
+            if identifier == self.bundle.session.id:
+                return
+            await self._replace(RuntimeRequest(model_name=self.bundle.model_name, resume=identifier))
 
     async def wait_for_idle(self) -> None:
-        await self._wait_for_idle()
+        async with self._state_lock:
+            await self._wait_for_idle()
+
+    @asynccontextmanager
+    async def state_change(self) -> AsyncIterator[RuntimeMutation]:
+        async with self._state_lock:
+            await self._wait_for_idle()
+            mutation = RuntimeMutation()
+            yield mutation
+            if mutation.reload_context:
+                await self._reload_context_unlocked()
+
+    async def compact(self, instructions: str | None = None) -> bool:
+        async with self._state_lock:
+            await self._wait_for_idle()
+            changed = await self.bundle.harness.compact(instructions=instructions)
+            if changed:
+                await self._reload_context_unlocked()
+            return changed
 
     async def reload_context(self) -> None:
         """Rebuild AgentState after compaction or pointer navigation and rebind event forwarding."""
-        await self._wait_for_idle()
+        async with self._state_lock:
+            await self._wait_for_idle()
+            await self._reload_context_unlocked()
+
+    async def _reload_context_unlocked(self) -> None:
         if self._agent_unsubscribe:
             self._agent_unsubscribe()
         self.bundle.harness.agent = None
         self._started = False
         self._agent_unsubscribe = None
-        await self.start()
+        await self._start_unlocked()
 
     async def close(self) -> None:
-        await self._wait_for_idle()
-        if self._agent_unsubscribe:
-            self._agent_unsubscribe()
-        self._agent_unsubscribe = None
-        self._started = False
-        await self.bundle.session.close()
+        async with self._state_lock:
+            await self._wait_for_idle()
+            if self._agent_unsubscribe:
+                self._agent_unsubscribe()
+            self._agent_unsubscribe = None
+            self._started = False
+            await self.bundle.session.close()
 
     async def _replace(self, request: RuntimeRequest) -> None:
         await self._wait_for_idle()
@@ -112,7 +150,7 @@ class RuntimeController:
         self.bundle = replacement
         self._started = False
         self._agent_unsubscribe = None
-        await self.start()
+        await self._start_unlocked()
 
     async def _wait_for_idle(self) -> None:
         agent = self.bundle.harness.agent

@@ -1,3 +1,6 @@
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+
 import pytest
 from le_agent_ai import AssistantMessage, FauxProvider, Model, TextContent, Usage, UserMessage
 from le_agent_ai.models import StreamEvent
@@ -169,14 +172,16 @@ async def test_tree_command_waits_for_idle_before_opening_navigator(monkeypatch)
     app = LeAgentApp(await _bundle())
     order: list[str] = []
 
-    async def wait_for_idle() -> None:
+    @asynccontextmanager
+    async def state_change():
         order.append("idle")
+        yield SimpleNamespace(reload_context=False)
 
     async def push_screen(_screen):
         order.append("screen")
         return None
 
-    monkeypatch.setattr(app.runtime, "wait_for_idle", wait_for_idle)
+    monkeypatch.setattr(app.runtime, "state_change", state_change)
     monkeypatch.setattr(app, "push_screen_wait", push_screen)
 
     assert await app._show_tree() == "已取消会话回溯"

@@ -98,9 +98,7 @@ async def test_model_and_compact_commands_use_runtime_and_custom_instructions() 
     calls: list[tuple[str, str | None]] = []
 
     class Harness:
-        async def compact(self, *, instructions: str | None = None) -> bool:
-            calls.append(("compact", instructions))
-            return True
+        pass
 
     class Runtime:
         bundle = SimpleNamespace(
@@ -113,11 +111,9 @@ async def test_model_and_compact_commands_use_runtime_and_custom_instructions() 
         async def switch_model(self, name: str) -> None:
             calls.append(("model", name))
 
-        async def reload_context(self) -> None:
-            calls.append(("reload", None))
-
-        async def wait_for_idle(self) -> None:
-            calls.append(("idle", None))
+        async def compact(self, instructions: str | None = None) -> bool:
+            calls.append(("compact", instructions))
+            return True
 
     registry = create_builtin_registry()
     context = CommandContext(runtime=Runtime())
@@ -126,9 +122,7 @@ async def test_model_and_compact_commands_use_runtime_and_custom_instructions() 
     assert (await registry.execute("/compact 重点保留接口决策", context)).message == "上下文压缩完成"
     assert calls == [
         ("model", "new"),
-        ("idle", None),
         ("compact", "重点保留接口决策"),
-        ("reload", None),
     ]
 
 

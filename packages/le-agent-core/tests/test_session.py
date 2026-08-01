@@ -155,6 +155,24 @@ async def test_jsonl_store_recovers_from_a_torn_final_append(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_jsonl_store_repairs_a_complete_final_entry_without_newline(tmp_path: Path) -> None:
+    repository = SessionRepository(JsonlSessionStore(tmp_path))
+    session = await repository.create()
+    await session.append_message(UserMessage(content=[TextContent(text="complete")]))
+    await session.close()
+    path = tmp_path / f"{session.id}.jsonl"
+    path.write_text(path.read_text(encoding="utf-8").rstrip("\n"), encoding="utf-8")
+
+    reopened = await repository.open(session.id)
+    await reopened.append_message(UserMessage(content=[TextContent(text="next")]))
+    await reopened.close()
+
+    opened_again = await repository.open(session.id)
+    assert _user_texts(await opened_again.build_context_messages()) == ["complete", "next"]
+    await opened_again.close()
+
+
+@pytest.mark.asyncio
 async def test_jsonl_session_has_one_writer_until_the_owner_closes(tmp_path: Path) -> None:
     first = await SessionRepository(JsonlSessionStore(tmp_path)).create()
 

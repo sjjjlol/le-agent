@@ -193,6 +193,11 @@ class JsonlSessionStore:
                 handle.truncate()
                 handle.flush()
                 os.fsync(handle.fileno())
+            elif raw and not raw.endswith(("\n", "\r")):
+                handle.seek(0, os.SEEK_END)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
             return entries
         except Exception:
             handle.close()
