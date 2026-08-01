@@ -27,6 +27,12 @@ async def _bundle(name: str, response: str, session=None) -> AppBundle:
 @pytest.mark.asyncio
 async def test_runtime_controller_rebinds_subscribers_when_bundle_changes() -> None:
     initial = await _bundle("one", "first")
+    initial.policy.mode = type(initial.policy.mode).TRUST
+
+    async def approve(_call, _args):
+        return "allow_once"
+
+    initial.policy.approval = approve
     requests: list[RuntimeRequest] = []
 
     async def factory(request: RuntimeRequest) -> AppBundle:
@@ -51,6 +57,8 @@ async def test_runtime_controller_rebinds_subscribers_when_bundle_changes() -> N
     assert requests == [RuntimeRequest(model_name="two", session=initial.session)]
     assert controller.bundle.model_name == "two"
     assert controller.bundle.session is initial.session
+    assert controller.bundle.policy.mode is type(controller.bundle.policy.mode).TRUST
+    assert controller.bundle.policy.approval is approve
     assert "model_change" in {entry.type for entry in await controller.bundle.session.entries()}
 
 
@@ -106,6 +114,23 @@ async def test_resuming_current_session_is_an_idle_noop() -> None:
 
     assert requests == []
     assert controller.bundle is initial
+    await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_name_session_updates_persistence_and_header_state() -> None:
+    initial = await _bundle("one", "unused")
+
+    async def factory(_request: RuntimeRequest) -> AppBundle:
+        return initial
+
+    controller = RuntimeController(initial, factory)
+    await controller.name_session("Demo")
+
+    assert controller.bundle.session_name == "Demo"
+    entries = await controller.bundle.session.entries()
+    assert entries[-1].type == "session_info"
+    assert entries[-1].payload["name"] == "Demo"
     await controller.close()
 
 

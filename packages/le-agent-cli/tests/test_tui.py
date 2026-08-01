@@ -17,6 +17,7 @@ from le_agent_core import AgentLoopConfig
 from le_agent_core.harness import AgentHarness
 from le_agent_core.loop import AgentEvent
 from le_agent_core.session import MemorySessionStore, SessionRepository
+from rich.cells import cell_len
 from textual.app import App, ComposeResult
 
 
@@ -202,6 +203,44 @@ async def test_provider_error_is_readable_and_always_stops_waiting() -> None:
 
 
 @pytest.mark.asyncio
+async def test_missing_api_key_and_worker_exception_are_visible() -> None:
+    bundle = await _bundle()
+    bundle.api_key_env = "OPENAI_API_KEY"
+    bundle.api_key_available = False
+    app = LeAgentApp(bundle)
+
+    async with app.run_test(size=(80, 24)):
+        assert sum(
+            "OPENAI_API_KEY" in str(widget.render()) for widget in app.query(".error-message")
+        ) == 1
+
+        async def fail(_text: str) -> None:
+            raise RuntimeError("provider worker crashed")
+
+        app.runtime.prompt = fail  # type: ignore[method-assign]
+        await app._run_prompt("hi")
+        assert any(
+            "provider worker crashed" in str(widget.render()) for widget in app.query(".error-message")
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [ValueError("模型名称不明确"), KeyError("会话不存在")])
+async def test_command_configuration_errors_are_rendered_in_transcript(error: Exception) -> None:
+    registry = CommandRegistry()
+
+    async def fail(_argument, _context):
+        raise error
+
+    registry.register(CommandSpec("fail", "fail", handler=fail))
+    app = LeAgentApp(await _bundle(), registry=registry)
+
+    async with app.run_test(size=(80, 24)):
+        await app._execute_command("/fail")
+        assert any(str(error) in str(widget.render()) for widget in app.query(".error-message"))
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("width", [40, 80, 120])
 async def test_compact_logo_header_is_visible_at_supported_widths(width: int) -> None:
     app = LeAgentApp(await _bundle())
@@ -210,6 +249,41 @@ async def test_compact_logo_header_is_visible_at_supported_widths(width: int) ->
         header = app.query_one(BrandHeader)
         assert "le-agent" in header.renderable.plain
         assert header.size.height == (1 if width == 40 else 2)
+
+
+@pytest.mark.asyncio
+async def test_narrow_header_truncates_long_session_name() -> None:
+    bundle = await _bundle()
+    bundle.session_name = "这是一个非常非常长的会话名称用于窄终端测试"
+    app = LeAgentApp(bundle)
+
+    async with app.run_test(size=(40, 24)):
+        header = app.query_one(BrandHeader)
+        assert header.size.height == 1
+        assert cell_len(header.renderable.plain) <= 40
+        assert header.renderable.plain.endswith("…")
+
+
+@pytest.mark.asyncio
+async def test_switching_to_provider_without_key_shows_warning_once() -> None:
+    registry = CommandRegistry()
+
+    async def switch(_argument, context):
+        from le_agent_cli.commands import CommandResult
+
+        context.runtime.bundle.api_key_env = "ANTHROPIC_API_KEY"
+        context.runtime.bundle.api_key_available = False
+        return CommandResult()
+
+    registry.register(CommandSpec("switch", "switch", handler=switch))
+    app = LeAgentApp(await _bundle(), registry=registry)
+
+    async with app.run_test(size=(80, 24)):
+        await app._execute_command("/switch")
+        await app._execute_command("/switch")
+        assert sum(
+            "ANTHROPIC_API_KEY" in str(widget.render()) for widget in app.query(".error-message")
+        ) == 1
 
 
 @pytest.mark.asyncio

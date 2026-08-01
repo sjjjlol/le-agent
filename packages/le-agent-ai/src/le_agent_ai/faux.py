@@ -93,5 +93,5 @@ class FauxProvider:
             stream.push(StreamEvent(type="done", message=message, usage=message.usage))
             stream.finish(message)
 
-        asyncio.create_task(publish())
+        stream.attach(asyncio.create_task(publish()))
         return stream

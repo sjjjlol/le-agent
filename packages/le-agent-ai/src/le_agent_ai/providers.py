@@ -214,7 +214,7 @@ class OpenAICompatibleProvider:
                 stream.push(StreamEvent(type="error", error_message=str(error), error_code=error_code, message=message))
                 stream.finish(message)
 
-        asyncio.create_task(run())
+        stream.attach(asyncio.create_task(run()))
         return stream
 
 
@@ -332,5 +332,5 @@ class AnthropicProvider:
                 stream.push(StreamEvent(type="error", error_message=str(error), error_code=error_code, message=message))
                 stream.finish(message)
 
-        asyncio.create_task(run())
+        stream.attach(asyncio.create_task(run()))
         return stream

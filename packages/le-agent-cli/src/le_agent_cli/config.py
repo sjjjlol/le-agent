@@ -143,6 +143,8 @@ def resolve_model_name(config: AppConfig, selector: str) -> str:
     value = selector.strip()
     if not value:
         raise ValueError("模型名称不能为空")
+    if value in config.models:
+        return value
     if "/" in value:
         provider, model_id = value.split("/", 1)
         matches = [
@@ -154,8 +156,6 @@ def resolve_model_name(config: AppConfig, selector: str) -> str:
             raise ValueError(f"模型 ID 不明确：{value}；请使用 provider/model-id")
         if id_matches:
             return id_matches[0]
-        if value in config.models:
-            return value
         matches = []
     if not matches:
         raise ValueError(f"未知模型：{value}")

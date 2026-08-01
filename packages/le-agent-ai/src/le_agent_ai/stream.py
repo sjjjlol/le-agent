@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 TEvent = TypeVar("TEvent")
 TResult = TypeVar("TResult")
@@ -16,6 +16,23 @@ class AsyncEventStream(Generic[TEvent, TResult]):
         self._end = object()
         self._result: asyncio.Future[TResult] = asyncio.get_running_loop().create_future()
         self._finished = False
+        self._producer: asyncio.Task[Any] | None = None
+
+    def attach(self, producer: asyncio.Task[Any]) -> None:
+        """Attach the producer task so cancellation propagates through stream layers."""
+        if self._producer is not None:
+            raise RuntimeError("event stream already has a producer")
+        self._producer = producer
+
+    async def cancel(self) -> None:
+        producer = self._producer
+        if producer is None or producer is asyncio.current_task():
+            return
+        producer.cancel()
+        try:
+            await producer
+        except asyncio.CancelledError:
+            pass
 
     def push(self, event: TEvent) -> None:
         if self._finished:

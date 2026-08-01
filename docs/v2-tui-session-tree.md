@@ -7,12 +7,14 @@
 要求 Python 3.12 与 uv。在仓库根目录执行：
 
 ```bash
-uv sync --all-packages --dev --no-editable
-cp config.example.toml .le-agent/config.toml
+uv sync --all-packages --dev
+export OPENAI_API_KEY=...
 uv run le-agent
 ```
 
-配置优先级为 CLI、环境变量、项目配置、用户配置、默认值。项目配置位于 `<workspace>/.le-agent/config.toml`，用户配置位于 `~/.le-agent/config.toml`；API key 只从 provider 配置指定的环境变量读取。模型必须显式配置 `provider`、`id`、`context_window` 与 `max_output_tokens`，未知模型不会猜测窗口大小。
+配置优先级为 CLI、环境变量、项目配置、用户配置、默认值。项目配置位于 `<workspace>/.le-agent/config.toml`，用户配置位于 `~/.le-agent/config.toml`；API key 只从 provider 配置指定的环境变量读取，绝不写入 TOML。默认模型是 `gpt-5.4-mini`；内置 OpenAI 型号还包括 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.5` 与 `gpt-5.4`，并保留 `claude` 配置。未知模型必须显式配置 `provider`、`id`、`context_window` 与 `max_output_tokens`，不会猜测窗口大小。
+
+缺少当前配置要求的 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY` 时，TUI 会显示一次警告但继续启动，以兼容无需密钥的本地代理。真实 API 验证应在启动 le-agent 的同一终端先导出相应变量。
 
 常用启动参数：
 
@@ -29,7 +31,9 @@ uv run le-agent --json "检查项目"
 
 ## V2 TUI
 
-界面采用 C 方案：深色单列 transcript、原位更新的工具卡、紧凑状态栏与底部 composer。状态栏的 context 占用优先采用最新 provider usage，并对 usage 之后的消息做保守估算。
+界面采用 C 方案：深色单列 transcript、常驻紧凑 Logo Header、原位更新的工具卡、紧凑状态栏与底部 composer。40 列终端的 Header 压缩为单行。状态栏的 context 占用优先采用最新 provider usage，并对 usage 之后的消息做保守估算。
+
+每次供应商请求开始前，runtime 发出 `assistant_request_start`。TUI 随即显示 `正在等待 · 秒数 · Esc 中止`，不暴露模型名；首个 text、thinking、tool-call、error 或终态到达后移除。Provider 错误、中止和 worker 异常都会形成可读消息，不会留下空白 assistant。Escape 的取消会从 Agent consumer 逐层传递到 loop 与 provider producer，避免网络流在后台继续运行。
 
 在 composer 输入 `/` 会立即显示完整命令表；继续输入会按命令名和中文描述过滤。可用键位：
 
@@ -44,14 +48,16 @@ uv run le-agent --json "检查项目"
 ## 统一斜杠命令
 
 - `/help`：命令列表。
-- `/model [name]`：搜索或直接切换模型；切换保留当前 Session，并追加 `model_change`。
+- `/model [name]`：无参数时使用无搜索框列表，以 `↑/↓/Enter/Escape` 选择真实 model ID；也可传配置名、唯一 model ID 或 `provider/model-id`。切换保留当前 Session，并追加 `model_change`。
 - `/settings`：选择权限模式。
-- `/new`：新建 Session；隐藏兼容别名为 `/clear`。
+- `/new`：新建 Session 并清空 transcript。
+- `/clear`：仅清空当前 transcript，不改变 Session ID、leaf、entries、Context、队列或工作区。
 - `/resume [session-id]`：搜索或恢复历史 Session。
 - `/tree`：搜索、筛选、折叠、标记并回溯 Session Tree。
 - `/compact [instructions]`：压缩 Context，可附带摘要聚焦要求；`Escape` 可取消。
-- `/skills` 与 `/skill <name> [args]`：列出或显式调用 Skill。内置命令始终优先于同名 Skill。
-- `/session`：显示 Session、模型、持久化模式与 entry 数；兼容别名为 `/status`。
+- `/skills` 与 `/skill <name> [args]`：列出或显式调用 Skill；只向模型提供 `SKILL.md` 路径，由模型按需使用 read 读取，不注入完整正文。内置命令始终优先于同名 Skill。
+- `/session`：显示 Session、模型、持久化模式、entry 数与 JSONL 绝对路径，并提供终端可点击链接；`--no-session` 明确显示“仅内存，无 JSONL 文件”。
+- `/status`：只显示 `上下文：百分比 · used / window tokens`，与底部状态栏共用计算结果。
 - `/name <name>`：设置 Session 名称。
 - `/hotkeys`：显示快捷键；`/quit`：释放会话锁并退出。
 

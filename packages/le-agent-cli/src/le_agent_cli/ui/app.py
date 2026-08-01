@@ -75,6 +75,7 @@ class LeAgentApp(App[None]):
         self.show_tool_details = False
         self._queue: list[str] = []
         self._command_worker: Worker[None] | None = None
+        self._warned_api_keys: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield BrandHeader(self.runtime.bundle, id="brand-header")
@@ -89,15 +90,10 @@ class LeAgentApp(App[None]):
     async def on_mount(self) -> None:
         self.runtime.subscribe(self._render_event)
         await self.runtime.start()
-        self.runtime.bundle.policy.approval = self._approve
         await self._reload_transcript()
         self.query_one(Composer).focus()
         self._refresh_status()
-        if self.runtime.bundle.api_key_env and not self.runtime.bundle.api_key_available:
-            await self.query_one(Transcript).append_message(
-                f"未检测到 {self.runtime.bundle.api_key_env}；模型请求会失败，除非当前代理无需密钥。",
-                "error",
-            )
+        await self._sync_bundle_ui()
         if self.initial_prompt:
             self.run_worker(self._run_prompt(self.initial_prompt), exclusive=False)
 
@@ -223,15 +219,27 @@ class LeAgentApp(App[None]):
                 for link in result.links:
                     rendered.append(f"\n{link.label}", style=f"link {link.target}")
                 await transcript.append_message(rendered, "system")
+            await self._sync_bundle_ui()
             if result.exit_requested:
                 self.exit()
-            self.query_one(BrandHeader).refresh_bundle(self.runtime.bundle)
-        except (CommandError, RuntimeError) as error:
+        except (CommandError, RuntimeError, ValueError, KeyError) as error:
             await transcript.append_message(str(error), "error")
 
     async def _reload_transcript(self) -> None:
         messages = await self.runtime.bundle.session.build_context_messages()
         await self.query_one(Transcript).reload_from_context(messages)
+
+    async def _sync_bundle_ui(self) -> None:
+        bundle = self.runtime.bundle
+        bundle.policy.approval = self._approve
+        self.query_one(BrandHeader).refresh_bundle(bundle)
+        api_key_env = bundle.api_key_env
+        if api_key_env and not bundle.api_key_available and api_key_env not in self._warned_api_keys:
+            self._warned_api_keys.add(api_key_env)
+            await self.query_one(Transcript).append_message(
+                f"未检测到 {api_key_env}；模型请求会失败，除非当前代理无需密钥。",
+                "error",
+            )
 
     async def _select_model(self, options: tuple[object, ...], current: str) -> str | None:
         model_options = list(options)

@@ -91,6 +91,12 @@ class RuntimeController:
                 return
             await self._replace(RuntimeRequest(model_name=self.bundle.model_name, resume=identifier))
 
+    async def name_session(self, name: str) -> None:
+        async with self._state_lock:
+            await self._wait_for_idle()
+            await self.bundle.session.append_session_info(name)
+            self.bundle.session_name = name.replace("\n", " ").strip()
+
     async def wait_for_idle(self) -> None:
         async with self._state_lock:
             await self._wait_for_idle()
@@ -139,6 +145,8 @@ class RuntimeController:
         await self._wait_for_idle()
         previous = self.bundle
         replacement = await self._factory(request)
+        replacement.policy.mode = previous.policy.mode
+        replacement.policy.approval = previous.policy.approval
         if replacement.session is not previous.session:
             try:
                 await previous.session.close()

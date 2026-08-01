@@ -57,6 +57,9 @@ def test_resolve_model_name_accepts_alias_unique_id_and_provider_id_and_rejects_
 
     duplicate = config.models["gpt-5.4-mini"].model_copy(update={"provider": "proxy"})
     config.models["mini-via-proxy"] = duplicate
+    assert resolve_model_name(config, "gpt-5.4-mini") == "gpt-5.4-mini"
+    config.models["shared-a"] = duplicate.model_copy(update={"id": "shared-id"})
+    config.models["shared-b"] = duplicate.model_copy(update={"provider": "openai", "id": "shared-id"})
     with pytest.raises(ValueError, match="不明确"):
-        resolve_model_name(config, "gpt-5.4-mini")
+        resolve_model_name(config, "shared-id")
     assert resolve_model_name(config, "proxy/gpt-5.4-mini") == "mini-via-proxy"

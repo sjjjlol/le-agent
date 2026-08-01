@@ -139,7 +139,7 @@ def agent_loop(
     prompts: list[AgentMessage], context: AgentContext, config: AgentLoopConfig
 ) -> AsyncEventStream[AgentEvent, list[AgentMessage]]:
     stream: AsyncEventStream[AgentEvent, list[AgentMessage]] = AsyncEventStream()
-    asyncio.create_task(_run(prompts, context, config, stream, add_prompts=True))
+    stream.attach(asyncio.create_task(_run(prompts, context, config, stream, add_prompts=True)))
     return stream
 
 
@@ -151,7 +151,7 @@ def agent_loop_continue(
     if isinstance(context.messages[-1], AssistantMessage):
         raise ValueError("cannot continue after an assistant message")
     stream: AsyncEventStream[AgentEvent, list[AgentMessage]] = AsyncEventStream()
-    asyncio.create_task(_run([], context, config, stream, add_prompts=False))
+    stream.attach(asyncio.create_task(_run([], context, config, stream, add_prompts=False)))
     return stream
 
 
@@ -249,13 +249,17 @@ async def _stream_assistant(
     await _emit(stream, AgentEvent(type="assistant_request_start"))
     provider_stream = await config.provider.stream(config.model, provider_context, api_key=config.api_key)
     started = False
-    async for provider_event in provider_stream:
-        if provider_event.type == "start":
-            started = True
-            await _emit(stream, AgentEvent(type="message_start"))
-        elif provider_event.type not in {"done", "usage"}:
-            await _emit(stream, AgentEvent(type="message_update", assistant_event=provider_event))
-    assistant = await provider_stream.result()
+    try:
+        async for provider_event in provider_stream:
+            if provider_event.type == "start":
+                started = True
+                await _emit(stream, AgentEvent(type="message_start"))
+            elif provider_event.type not in {"done", "usage"}:
+                await _emit(stream, AgentEvent(type="message_update", assistant_event=provider_event))
+        assistant = await provider_stream.result()
+    except asyncio.CancelledError:
+        await provider_stream.cancel()
+        raise
     if not started:
         await _emit(stream, AgentEvent(type="message_start", message=assistant))
     context.messages.append(assistant)

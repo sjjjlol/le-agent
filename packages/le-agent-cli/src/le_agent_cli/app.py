@@ -46,6 +46,7 @@ class AppBundle:
     api_key_available: bool = True
     session_file: Path | None = None
     model_options: tuple[ModelOption, ...] = ()
+    session_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +162,14 @@ async def create_bundle(
         session = session_override
     else:
         session = await repository.open(resume) if resume else await repository.create()
+    session_name = next(
+        (
+            str(entry.payload["name"])
+            for entry in reversed(await session.entries())
+            if entry.type == "session_info" and entry.payload.get("name")
+        ),
+        None,
+    )
     tools: list[AgentTool[Any]] = [
         ReadTool(workspace, skill_roots=[user_skills, project_skills]),
         WriteTool(workspace),
@@ -197,4 +206,5 @@ async def create_bundle(
             ModelOption(name=name, provider=item.provider, model_id=item.id)
             for name, item in config.models.items()
         ),
+        session_name=session_name,
     )

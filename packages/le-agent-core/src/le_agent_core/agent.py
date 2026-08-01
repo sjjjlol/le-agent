@@ -102,6 +102,13 @@ class Agent:
                     if isinstance(result, Awaitable):
                         await result
             await stream.result()
+        except asyncio.CancelledError:
+            await stream.cancel()
+            try:
+                await stream.result()
+            except asyncio.CancelledError:
+                pass
+            raise
         finally:
             self.state.is_streaming = False
             self.state.streaming_message = None

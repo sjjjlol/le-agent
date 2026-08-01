@@ -240,7 +240,10 @@ def create_builtin_registry() -> CommandRegistry:
         skill = context.runtime.bundle.skills.get(name)
         if skill is None:
             raise CommandError(f"未知 Skill：{name}")
-        prompt = f"使用 Skill `{skill.name}` 完成请求。\n\n{skill.body}"
+        prompt = (
+            f"使用 Skill `{skill.name}` 完成请求。先使用 read 工具按需读取 `{skill.path}`，"
+            "再遵循其中的工作流程；不要假设 Skill 正文已经注入上下文。"
+        )
         if arguments.strip():
             prompt += f"\n\n用户参数：{arguments.strip()}"
         await context.runtime.prompt(prompt)
@@ -272,7 +275,7 @@ def create_builtin_registry() -> CommandRegistry:
     async def name_command(argument: str, context: CommandContext) -> CommandResult:
         if not argument:
             raise CommandError("用法：/name <会话名称>")
-        await context.runtime.bundle.session.append_session_info(argument)
+        await context.runtime.name_session(argument)
         return CommandResult(message=f"会话已命名：{argument}")
 
     async def hotkeys_command(_argument: str, _context: CommandContext) -> CommandResult:
@@ -283,7 +286,8 @@ def create_builtin_registry() -> CommandRegistry:
             )
         )
 
-    async def quit_command(_argument: str, _context: CommandContext) -> CommandResult:
+    async def quit_command(_argument: str, context: CommandContext) -> CommandResult:
+        context.runtime.abort()
         return CommandResult(exit_requested=True)
 
     specs = [

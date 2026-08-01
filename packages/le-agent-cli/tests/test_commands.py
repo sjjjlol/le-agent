@@ -149,7 +149,12 @@ async def test_remaining_builtin_commands_execute_through_one_context() -> None:
         async def append_session_info(self, name: str) -> None:
             calls.append(("name", name))
 
-    skill = SimpleNamespace(name="review", description="Review code", body="Inspect carefully")
+    skill = SimpleNamespace(
+        name="review",
+        description="Review code",
+        path=Path("/skills/review/SKILL.md"),
+        body="Inspect carefully",
+    )
 
     class Runtime:
         bundle = SimpleNamespace(
@@ -170,6 +175,12 @@ async def test_remaining_builtin_commands_execute_through_one_context() -> None:
 
         async def prompt(self, prompt: str) -> None:
             calls.append(("prompt", prompt))
+
+        async def name_session(self, name: str) -> None:
+            calls.append(("name", name))
+
+        def abort(self) -> None:
+            calls.append(("abort", None))
 
     async def select_setting(_current: str) -> str | None:
         return None
@@ -204,8 +215,10 @@ async def test_remaining_builtin_commands_execute_through_one_context() -> None:
     assert "Alt+Enter" in (await registry.execute("/hotkeys", context)).message
     assert (await registry.execute("/quit", context)).exit_requested
     assert calls[0:2] == [("new", None), ("resume", "saved")]
-    assert calls[-1] == ("name", "Demo")
-    assert "Inspect carefully" in calls[2][1]
+    assert ("name", "Demo") in calls
+    assert calls[-1] == ("abort", None)
+    assert "/skills/review/SKILL.md" in calls[2][1]
+    assert "Inspect carefully" not in calls[2][1]
 
     with pytest.raises(CommandError, match="用法"):
         await registry.execute("/skill", context)
