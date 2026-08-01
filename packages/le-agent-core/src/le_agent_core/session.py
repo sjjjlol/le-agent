@@ -69,6 +69,19 @@ class SessionEntry:
         return cls(identifier, parent_id, float(timestamp), entry_type, payload)
 
 
+@dataclass(frozen=True, slots=True)
+class SessionTreeNode:
+    entry: SessionEntry
+    children: tuple["SessionTreeNode", ...]
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BranchDivergence:
+    common_ancestor_id: str | None
+    abandoned_entries: tuple[SessionEntry, ...]
+
+
 def _message_to_dict(message: AgentMessage) -> dict[str, Any]:
     return message.model_dump(mode="json")
 
@@ -137,7 +150,7 @@ class JsonlSessionStore:
         path = self._path(identifier)
         if path.exists():
             raise ValueError(f"session already exists: {identifier}")
-        header = {"type": "session", "version": 1, "id": identifier, "created_at": created_at}
+        header = {"type": "session", "version": 2, "id": identifier, "created_at": created_at}
         with path.open("x", encoding="utf-8") as handle:
             handle.write(json.dumps(header, ensure_ascii=False) + "\n")
             handle.flush()
@@ -152,7 +165,11 @@ class JsonlSessionStore:
         if not lines:
             raise ValueError("session is missing header")
         header = json.loads(lines[0])
-        if header.get("type") != "session" or header.get("version") != 1 or header.get("id") != identifier:
+        if (
+            header.get("type") != "session"
+            or header.get("version") not in {1, 2}
+            or header.get("id") != identifier
+        ):
             raise ValueError("invalid session header")
         entries: list[SessionEntry] = []
         nonempty = [line for line in lines[1:] if line.strip()]
@@ -199,6 +216,38 @@ class Session:
     async def leaf_id(self) -> str | None:
         return self._leaf_id
 
+    async def get_entry(self, entry_id: str) -> SessionEntry:
+        try:
+            return self._by_id[entry_id]
+        except KeyError as error:
+            raise KeyError(f"entry not found: {entry_id}") from error
+
+    async def get_tree(self) -> tuple[SessionTreeNode, ...]:
+        labels: dict[str, str] = {}
+        visible = [entry for entry in self._entries if entry.type != "leaf"]
+        visible_ids = {entry.id for entry in visible}
+        children: dict[str | None, list[SessionEntry]] = {}
+        for entry in visible:
+            if entry.parent_id is not None and entry.parent_id not in visible_ids:
+                raise ValueError(f"broken session parent reference: {entry.parent_id}")
+            children.setdefault(entry.parent_id, []).append(entry)
+            if entry.type == "label":
+                target_id = str(entry.payload["target_id"])
+                label = entry.payload.get("label")
+                if label:
+                    labels[target_id] = str(label)
+                else:
+                    labels.pop(target_id, None)
+
+        def build(entry: SessionEntry) -> SessionTreeNode:
+            return SessionTreeNode(
+                entry=entry,
+                children=tuple(build(child) for child in children.get(entry.id, [])),
+                label=labels.get(entry.id),
+            )
+
+        return tuple(build(entry) for entry in children.get(None, []))
+
     async def append_message(self, message: AgentMessage) -> str:
         return await self._append("message", {"message": _message_to_dict(message)})
 
@@ -241,8 +290,19 @@ class Session:
     async def move_to(self, entry_id: str | None) -> None:
         if entry_id is not None and entry_id not in self._by_id:
             raise KeyError(f"entry not found: {entry_id}")
-        await self._append("leaf", {"target_id": entry_id})
         self._leaf_id = entry_id
+
+    async def branch_divergence(self, from_id: str, to_id: str) -> BranchDivergence:
+        old_branch = await self.branch(from_id)
+        target_branch = await self.branch(to_id)
+        common_ancestor_id: str | None = None
+        shared_count = 0
+        for old_entry, target_entry in zip(old_branch, target_branch, strict=False):
+            if old_entry.id != target_entry.id:
+                break
+            common_ancestor_id = old_entry.id
+            shared_count += 1
+        return BranchDivergence(common_ancestor_id, tuple(old_branch[shared_count:]))
 
     async def branch(self, from_id: str | None = None) -> list[SessionEntry]:
         current = self._leaf_id if from_id is None else from_id
@@ -291,7 +351,7 @@ class Session:
         await self._store.append(self.id, entry)
         self._entries.append(entry)
         self._by_id[entry.id] = entry
-        self._leaf_id = payload["target_id"] if entry_type == "leaf" else entry.id
+        self._leaf_id = entry.id
         return entry.id
 
 
