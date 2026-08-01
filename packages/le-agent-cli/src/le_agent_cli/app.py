@@ -113,7 +113,7 @@ async def create_bundle(
         ReadTool(workspace, skill_roots=[user_skills, project_skills]),
         WriteTool(workspace),
         EditTool(workspace),
-        BashTool(workspace),
+        BashTool(workspace, log_root=Path.home() / ".le-agent" / "logs" / session.id),
     ]
     loop_config = AgentLoopConfig(
         model=model,

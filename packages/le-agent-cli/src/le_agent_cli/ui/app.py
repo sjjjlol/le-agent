@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from le_agent_ai.models import ToolCallContent
+from le_agent_ai.models import StreamEvent, ToolCallContent
 from le_agent_core.loop import AgentEvent
 from pydantic import BaseModel
 from textual.app import App, ComposeResult
@@ -90,14 +90,22 @@ class LeAgentApp(App[None]):
         return await self.push_screen_wait(ApprovalScreen(call.name, str(args.model_dump())))
 
     async def _render_event(self, event: AgentEvent) -> None:
-        if event.type != "message_end" or event.message is None:
-            return
         transcript = self.query_one(Transcript)
-        if event.message.role == "user":
+        if event.type == "message_start" and (event.message is None or event.message.role == "assistant"):
+            await transcript.start_assistant()
+        elif event.type == "message_update" and isinstance(event.assistant_event, StreamEvent):
+            await transcript.queue_assistant_event(event.assistant_event)
+        elif event.type == "tool_execution_start" and event.tool_call_id and event.tool_name:
+            await transcript.start_tool(event.tool_call_id, event.tool_name)
+        elif event.type == "tool_execution_update" and event.tool_call_id:
+            transcript.update_tool(event.tool_call_id, str(event.assistant_event or ""))
+        elif event.type == "tool_execution_end" and event.tool_call_id and event.tool_result:
+            transcript.finish_tool(event.tool_call_id, event.tool_result)
+        elif event.type == "message_end" and event.message is not None and event.message.role == "user":
             text = "".join(block.text for block in event.message.content)
             await transcript.append_message(f"❯ {text}", "user")
-        elif event.message.role == "assistant":
-            await transcript.append_message(event.message.text, "assistant")
+        elif event.type == "message_end" and event.message is not None and event.message.role == "assistant":
+            await transcript.finish_assistant(event.message)
         self._refresh_status()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
@@ -160,6 +168,7 @@ class LeAgentApp(App[None]):
 
     def action_toggle_tools(self) -> None:
         self.show_tool_details = not self.show_tool_details
+        self.query_one(Transcript).toggle_tools(self.show_tool_details)
 
     def action_show_tree(self) -> None:
         self.run_worker(self._execute_command("/tree"), exclusive=False)

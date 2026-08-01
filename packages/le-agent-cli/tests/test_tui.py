@@ -1,13 +1,16 @@
 import pytest
-from le_agent_ai import FauxProvider, Model
+from le_agent_ai import AssistantMessage, FauxProvider, Model, TextContent
+from le_agent_ai.models import StreamEvent
 from le_agent_cli.app import AppBundle
 from le_agent_cli.commands import CommandRegistry, CommandSpec
 from le_agent_cli.permissions import PermissionController
 from le_agent_cli.ui.app import LeAgentApp
 from le_agent_cli.ui.composer import Composer
 from le_agent_cli.ui.palette import CommandPalette
+from le_agent_cli.ui.transcript import AssistantMessageView, ToolCard, Transcript
 from le_agent_core import AgentLoopConfig
 from le_agent_core.harness import AgentHarness
+from le_agent_core.loop import AgentEvent
 from le_agent_core.session import MemorySessionStore, SessionRepository
 from textual.app import App, ComposeResult
 
@@ -74,3 +77,41 @@ async def test_composer_distinguishes_steer_follow_up_and_newline() -> None:
         await pilot.press("alt+enter")
 
         assert app.submissions == [("a\nb", "steer"), ("later", "follow_up")]
+
+
+@pytest.mark.asyncio
+async def test_transcript_coalesces_stream_deltas_and_updates_tool_card_in_place() -> None:
+    app = LeAgentApp(await _bundle())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app._render_event(AgentEvent(type="message_start"))
+        await app._render_event(
+            AgentEvent(type="message_update", assistant_event=StreamEvent(type="text_delta", delta="hel"))
+        )
+        await app._render_event(
+            AgentEvent(type="message_update", assistant_event=StreamEvent(type="text_delta", delta="lo"))
+        )
+        await pilot.pause(0.05)
+
+        assistant = app.query_one(AssistantMessageView)
+        assert "hello" in assistant.renderable.plain
+
+        await app._render_event(AgentEvent(type="tool_execution_start", tool_call_id="call-1", tool_name="bash"))
+        await app._render_event(
+            AgentEvent(
+                type="tool_execution_update",
+                tool_call_id="call-1",
+                tool_name="bash",
+                assistant_event="running",
+            )
+        )
+        card = app.query_one(ToolCard)
+        assert "running" in card.renderable.plain
+
+        await app._render_event(
+            AgentEvent(
+                type="message_end",
+                message=AssistantMessage(content=[TextContent(text="hello")], provider="faux", model="test"),
+            )
+        )
+        assert len(app.query_one(Transcript).query(AssistantMessageView)) == 1

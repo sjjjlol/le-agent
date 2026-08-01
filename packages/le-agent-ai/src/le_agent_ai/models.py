@@ -69,6 +69,7 @@ class ToolResultMessage(LeModel):
     tool_name: str
     content: list[TextContent]
     is_error: bool = False
+    details: Any = None
     timestamp: float = 0.0
 
 
