@@ -15,7 +15,7 @@ from le_agent_core.harness import AgentHarness
 from le_agent_core.loop import AgentLoopConfig, AgentTool
 from le_agent_core.session import JsonlSessionStore, MemorySessionStore, Session, SessionRepository
 
-from .config import AppConfig, api_key_for, registry_from_config
+from .config import AppConfig, api_key_for, registry_from_config, resolve_model_name
 from .permissions import PermissionController, PermissionMode
 from .skills import Skill, load_skills, skill_catalog_prompt
 from .tools import BashTool, EditTool, ReadTool, WriteTool
@@ -23,6 +23,13 @@ from .tools import BashTool, EditTool, ReadTool, WriteTool
 BASE_SYSTEM_PROMPT = """You are le-agent, a careful coding agent working in a local repository.
 Inspect before changing files. Use tools deliberately, explain important decisions, and run relevant checks after edits.
 Respect user approval and never claim success without evidence."""
+
+
+@dataclass(slots=True)
+class ModelOption:
+    name: str
+    provider: str
+    model_id: str
 
 
 @dataclass(slots=True)
@@ -38,6 +45,7 @@ class AppBundle:
     api_key_env: str | None = None
     api_key_available: bool = True
     session_file: Path | None = None
+    model_options: tuple[ModelOption, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,9 +142,10 @@ async def create_bundle(
     session_override: Session | None = None,
 ) -> AppBundle:
     registry = registry_from_config(config)
-    selected_name = model_name or config.default_model
-    if not selected_name:
+    requested_model = model_name or config.default_model
+    if not requested_model:
         raise ValueError("no model selected; set default_model in .le-agent/config.toml or pass --model")
+    selected_name = resolve_model_name(config, requested_model)
     model = registry.require(selected_name)
     provider = _provider(config, model)
     api_key = api_key_for(config, model.provider)
@@ -184,4 +193,8 @@ async def create_bundle(
         api_key_env=api_key_env,
         api_key_available=bool(api_key) if api_key_env else True,
         session_file=None if no_session else _session_root(workspace) / f"{session.id}.jsonl",
+        model_options=tuple(
+            ModelOption(name=name, provider=item.provider, model_id=item.id)
+            for name, item in config.models.items()
+        ),
     )

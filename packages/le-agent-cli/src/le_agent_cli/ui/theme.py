@@ -105,4 +105,16 @@ SearchableSelector {
 #selector-title { height: 3; padding: 1 2 0 2; border-top: thick #5e81ac; }
 #selector-search { height: 3; margin: 0; }
 #selector-options { height: 16; border-bottom: thick #5e81ac; }
+
+ModelSelector {
+    align: center middle;
+}
+
+#model-selector-title, #model-selector-options {
+    width: 72;
+    background: #17202a;
+}
+
+#model-selector-title { height: 3; padding: 1 2 0 2; border-top: thick #5e81ac; }
+#model-selector-options { height: 18; border-bottom: thick #5e81ac; }
 """

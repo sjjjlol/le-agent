@@ -10,6 +10,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from ..app import ModelOption
+
 
 @dataclass(frozen=True, slots=True)
 class SelectorItem:
@@ -64,3 +66,36 @@ class SearchableSelector(ModalScreen[str | None]):
                 label.append(f"  {item.description}", style="#8f9baa")
             options.add_option(Option(label, id=item.value))
         options.highlighted = 0 if matches else None
+
+
+class ModelSelector(ModalScreen[str | None]):
+    """Arrow-key model picker with concrete model ids and no search field."""
+
+    BINDINGS = [("escape", "cancel", "取消")]
+
+    def __init__(self, items: list[ModelOption], *, current: str) -> None:
+        super().__init__()
+        self.items = sorted(items, key=lambda item: item.name != current)
+        self.current = current
+
+    def compose(self) -> ComposeResult:
+        yield Static("选择模型 · ↑/↓ 移动 · Enter 确认 · Esc 取消", id="model-selector-title")
+        yield OptionList(id="model-selector-options")
+
+    def on_mount(self) -> None:
+        options = self.query_one("#model-selector-options", OptionList)
+        for item in self.items:
+            marker = "◆ " if item.name == self.current else "  "
+            label = Text.assemble((f"{marker}{item.model_id}", "bold #88c0d0"))
+            alias = f" · 配置 {item.name}" if item.name != item.model_id else ""
+            label.append(f"  {item.provider}{alias}", style="#8f9baa")
+            options.add_option(Option(label, id=item.name))
+        options.highlighted = 0 if self.items else None
+        options.focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id == "model-selector-options" and event.option.id:
+            self.dismiss(str(event.option.id))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)

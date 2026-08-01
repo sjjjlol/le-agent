@@ -20,7 +20,7 @@ from ..runtime import RuntimeController, RuntimeRequest
 from .composer import Composer
 from .header import BrandHeader
 from .palette import CommandPalette
-from .selectors import SearchableSelector, SelectorItem
+from .selectors import ModelSelector, SearchableSelector, SelectorItem
 from .status import StatusBar
 from .theme import APP_CSS
 from .transcript import Transcript
@@ -233,9 +233,13 @@ class LeAgentApp(App[None]):
         messages = await self.runtime.bundle.session.build_context_messages()
         await self.query_one(Transcript).reload_from_context(messages)
 
-    async def _select_model(self, names: tuple[str, ...], current: str) -> str | None:
-        items = [SelectorItem(name, name, "当前" if name == current else "") for name in names]
-        return await self.push_screen_wait(SearchableSelector("选择模型", items, current=current))
+    async def _select_model(self, options: tuple[object, ...], current: str) -> str | None:
+        model_options = list(options)
+        if model_options and isinstance(model_options[0], str):
+            from ..app import ModelOption
+
+            model_options = [ModelOption(str(name), "", str(name)) for name in model_options]
+        return await self.push_screen_wait(ModelSelector(model_options, current=current))  # type: ignore[arg-type]
 
     async def _select_session(self) -> str | None:
         sessions = list_sessions(self.runtime.bundle.workspace)

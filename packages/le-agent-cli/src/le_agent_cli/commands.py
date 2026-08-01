@@ -176,10 +176,13 @@ def create_builtin_registry() -> CommandRegistry:
         return CommandResult(message="可用命令\n" + "\n".join(lines))
 
     async def model_command(argument: str, context: CommandContext) -> CommandResult:
+        options = tuple(getattr(context.runtime.bundle, "model_options", ()))
+        if not options:
+            options = tuple(getattr(context.runtime.bundle, "model_names", ()))
         selected = argument or await _invoke_ui(
             context,
             "select_model",
-            tuple(getattr(context.runtime.bundle, "model_names", ())),
+            options,
             context.runtime.bundle.model_name,
         )
         if not selected:

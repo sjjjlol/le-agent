@@ -10,6 +10,65 @@ from typing import Any
 
 from le_agent_ai import Model, ModelRegistry
 
+_BUILTIN_CONFIG: dict[str, Any] = {
+    "default_model": "gpt-5.4-mini",
+    "providers": {
+        "openai": {"kind": "openai", "api_key_env": "OPENAI_API_KEY"},
+        "anthropic": {"kind": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"},
+    },
+    "models": {
+        "gpt-5.6-sol": {
+            "provider": "openai",
+            "id": "gpt-5.6-sol",
+            "context_window": 1_050_000,
+            "max_output_tokens": 128_000,
+            "supports_thinking": True,
+        },
+        "gpt-5.6-terra": {
+            "provider": "openai",
+            "id": "gpt-5.6-terra",
+            "context_window": 1_050_000,
+            "max_output_tokens": 128_000,
+            "supports_thinking": True,
+        },
+        "gpt-5.6-luna": {
+            "provider": "openai",
+            "id": "gpt-5.6-luna",
+            "context_window": 1_050_000,
+            "max_output_tokens": 128_000,
+            "supports_thinking": True,
+        },
+        "gpt-5.5": {
+            "provider": "openai",
+            "id": "gpt-5.5",
+            "context_window": 1_050_000,
+            "max_output_tokens": 128_000,
+            "supports_thinking": True,
+        },
+        "gpt-5.4": {
+            "provider": "openai",
+            "id": "gpt-5.4",
+            "context_window": 1_050_000,
+            "max_output_tokens": 128_000,
+            "supports_thinking": True,
+        },
+        "gpt-5.4-mini": {
+            "provider": "openai",
+            "id": "gpt-5.4-mini",
+            "context_window": 400_000,
+            "max_output_tokens": 128_000,
+            "supports_thinking": True,
+        },
+        "claude": {
+            "provider": "anthropic",
+            "id": "claude-sonnet-4-6",
+            "context_window": 200_000,
+            "max_output_tokens": 16_000,
+            "supports_thinking": True,
+        },
+    },
+}
+
 
 @dataclass(slots=True)
 class ProviderConfig:
@@ -44,7 +103,7 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def load_config(*, user_path: Path, project_path: Path) -> AppConfig:
-    data = _merge(_load(user_path), _load(project_path))
+    data = _merge(_BUILTIN_CONFIG, _merge(_load(user_path), _load(project_path)))
     providers = {
         name: ProviderConfig(
             kind=str(value.get("kind", name)),
@@ -77,6 +136,32 @@ def registry_from_config(config: AppConfig) -> ModelRegistry:
     for name, model in config.models.items():
         registry.register(name, model)
     return registry
+
+
+def resolve_model_name(config: AppConfig, selector: str) -> str:
+    """Resolve an alias, unique model id, or provider/model-id to a config name."""
+    value = selector.strip()
+    if not value:
+        raise ValueError("模型名称不能为空")
+    if "/" in value:
+        provider, model_id = value.split("/", 1)
+        matches = [
+            name for name, model in config.models.items() if model.provider == provider and model.id == model_id
+        ]
+    else:
+        id_matches = [name for name, model in config.models.items() if model.id == value]
+        if len(id_matches) > 1:
+            raise ValueError(f"模型 ID 不明确：{value}；请使用 provider/model-id")
+        if id_matches:
+            return id_matches[0]
+        if value in config.models:
+            return value
+        matches = []
+    if not matches:
+        raise ValueError(f"未知模型：{value}")
+    if len(matches) > 1:
+        raise ValueError(f"模型名称不明确：{value}")
+    return matches[0]
 
 
 def api_key_for(config: AppConfig, provider: str) -> str | None:
