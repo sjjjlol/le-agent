@@ -9,7 +9,7 @@
 需要 macOS、Python 3.12 和 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
-cp config.example.toml .le-agent/config.toml
+cp config.toml .le-agent/config.toml
 export ANTHROPIC_API_KEY=...
 uv sync --all-packages --dev --no-editable
 uv run le-agent
@@ -25,7 +25,7 @@ uv run le-agent --continue "继续上次任务"
 uv run le-agent --resume SESSION_ID "恢复指定会话"
 ```
 
-完整配置见 [config.example.toml](config.example.toml)。未知模型必须显式配置 `context_window` 和能力，le-agent 不猜测模型上下文窗口。
+完整配置见 [config.example.toml](.le-agent/config.toml)。未知模型必须显式配置 `context_window` 和能力，le-agent 不猜测模型上下文窗口。
 
 ## 架构
 
