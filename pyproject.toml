@@ -1,53 +1,71 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
 [project]
-name = "le-agent-workspace"
-version = "0.1.0"
-description = "Python reimplementation of pi-style coding agent architecture"
+name = "le-agent"
+version = "0.2.0"
+description = "A readable, extensible Python coding agent for the terminal."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "anyio>=4.0",
+    "httpx[socks]>=0.27",
+    "packaging>=24.0",
+    "pillow>=11.0",
+    "pydantic>=2.11",
+    "pygments>=2.18",
+    "rich>=13.0",
+    "tavily-python>=0.7.27",
+    "textual>=8.2.8",
+    "typer>=0.12",
+]
+
+[project.urls]
+Repository = "https://github.com/sjjjlol/le-agent"
+Issues = "https://github.com/sjjjlol/le-agent/issues"
+
+[project.scripts]
+le-agent = "le_agent_coding.cli:app"
 
 [dependency-groups]
 dev = [
-  "mypy>=1.13",
-  "pytest>=8.3",
-  "pytest-asyncio>=0.24",
-  "pytest-cov>=6.0",
-  "ruff>=0.8",
-  "types-PyYAML>=6.0",
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "ruff>=0.5",
 ]
 
-[tool.uv.workspace]
-members = ["packages/*"]
-
-[tool.uv.sources]
-le-agent-ai = { workspace = true }
-le-agent-core = { workspace = true }
-le-agent-cli = { workspace = true }
-
-[tool.pytest.ini_options]
-testpaths = ["packages"]
-asyncio_mode = "auto"
-addopts = "-ra"
-
-[tool.coverage.run]
-branch = true
-source = ["le_agent_ai", "le_agent_core", "le_agent_cli"]
-
-[tool.coverage.report]
-fail_under = 85
-show_missing = true
+[tool.hatch.build.targets.wheel]
+packages = ["src/le_agent_ai", "src/le_agent", "src/le_agent_coding"]
 
 [tool.ruff]
-line-length = 120
+line-length = 100
 target-version = "py312"
-exclude = ["build"]
+src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "ASYNC"]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
-warn_unused_configs = true
-explicit_package_bases = true
-mypy_path = ["packages/le-agent-ai/src", "packages/le-agent-core/src", "packages/le-agent-cli/src"]
-exclude = "(^|/)(build|tests)/"
+packages = ["le_agent_ai", "le_agent", "le_agent_coding"]
+exclude = ['^src/le_agent_coding/data/benchmark_tasks/[^/]+/workspace/']
+
+[[tool.mypy.overrides]]
+module = "pygments.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tavily.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
