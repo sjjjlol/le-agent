@@ -1,0 +1,6 @@
+schema_version = 1
+id = "failing_test_fix"
+title = "修复 slugify 测试"
+prompt = "请修复 bug、运行 `python -m unittest discover -s tests -t . -q`，并保持简单输入行为。"
+timeout_seconds = 30
+evaluator = "failing_test_fix"

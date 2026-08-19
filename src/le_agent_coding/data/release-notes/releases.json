@@ -1,0 +1,21 @@
+[
+  {
+    "version": "0.2.0",
+    "date": "2026-08-20",
+    "sections": {
+      "Changed": [
+        "Rebuild LeAgent around a portable core, provider adapters, and a coding application layer.",
+        "Adopt a single le-agent distribution and a deliberately incompatible session/configuration schema.",
+        "Execute tool batches in parallel only when every known tool in the batch allows parallel execution."
+      ],
+      "New": [
+        "Add Tavily-backed web_search with keyed and best-effort keyless modes.",
+        "Add extensions, prompts, themes, exports, updater support, and the native benchmark runtime."
+      ],
+      "Removed": [
+        "Remove native Anthropic and Google provider implementations.",
+        "Remove the former built-in permission policy; extensions can implement policy through tool hooks."
+      ]
+    }
+  }
+]

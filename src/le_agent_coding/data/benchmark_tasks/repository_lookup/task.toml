@@ -1,0 +1,9 @@
+schema_version = 1
+id = "repository_lookup"
+title = "定位问候语实现"
+prompt = """
+请在不修改文件的前提下，定位生成问候语的最终实现。最终回答必须同时写出
+`welcome/render.py`、`format_salutation`，并说明 `build_welcome` 调用了该函数。
+"""
+timeout_seconds = 30
+evaluator = "repository_lookup"

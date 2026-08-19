@@ -1,0 +1,6 @@
+schema_version = 1
+id = "targeted_edit"
+title = "调整免运费门槛"
+prompt = "请把普通用户免运费门槛从 50 改为 75，75 本身免运费，会员规则不变。"
+timeout_seconds = 30
+evaluator = "targeted_edit"
