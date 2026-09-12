@@ -44,8 +44,8 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import suppress
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from contextlib import aclosing, suppress
 from dataclasses import dataclass, field
 from inspect import isawaitable
 from typing import Literal
@@ -292,7 +292,7 @@ class AgentHarness:
     def pop_latest_steering(self) -> AgentMessage | None:
         return self._steering_queue.pop() if self._steering_queue else None
 
-    def prompt_message(self, message: AgentMessage) -> AsyncIterator[AgentEvent]:
+    def prompt_message(self, message: AgentMessage) -> AsyncGenerator[AgentEvent, None]:
         """启动新的 Agent Run，追加一条消息到历史，然后运行 Loop。
 
         参数说明：
@@ -325,10 +325,10 @@ class AgentHarness:
         self._running = True
         return self._run(prompts=(message,))
 
-    def prompt(self, content: str) -> AsyncIterator[AgentEvent]:
+    def prompt(self, content: str) -> AsyncGenerator[AgentEvent, None]:
         return self.prompt_message(UserMessage(content=content))
 
-    def continue_(self) -> AsyncIterator[AgentEvent]:
+    def continue_(self) -> AsyncGenerator[AgentEvent, None]:
         """从当前状态继续 Agent Run，不追加新消息。
 
         使用场景：
@@ -361,7 +361,7 @@ class AgentHarness:
         self,
         *,
         prompts: Sequence[AgentMessage] = (),
-    ) -> AsyncIterator[AgentEvent]:
+    ) -> AsyncGenerator[AgentEvent, None]:
         """内部方法：运行 Agent Loop 并广播事件。
 
         参数说明：
@@ -388,23 +388,26 @@ class AgentHarness:
         try:
             # Harness 拥有唯一的可变 transcript，并保证同一时刻只有一个 loop 修改它。
             # 两个 drain callback 把队列语义注入纯循环，而不让循环依赖 UI 或会话策略。
-            async for event in run_agent_loop(
-                provider=self._config.provider,
-                model=self._config.model,
-                system=self._config.system,
-                messages=self._messages,
-                prompts=prompts,
-                tools=self._config.tools,
-                max_turns=self._config.max_turns,
-                signal=signal,
-                get_steering_messages=self._drain_steering_messages,
-                get_follow_up_messages=self._drain_follow_up_messages,
-                before_tool_call=self._config.before_tool_call,
-                after_tool_call=self._config.after_tool_call,
-                tool_execution=self._config.tool_execution,
-            ):
-                await self._notify(event)
-                yield event
+            async with aclosing(
+                run_agent_loop(
+                    provider=self._config.provider,
+                    model=self._config.model,
+                    system=self._config.system,
+                    messages=self._messages,
+                    prompts=prompts,
+                    tools=self._config.tools,
+                    max_turns=self._config.max_turns,
+                    signal=signal,
+                    get_steering_messages=self._drain_steering_messages,
+                    get_follow_up_messages=self._drain_follow_up_messages,
+                    before_tool_call=self._config.before_tool_call,
+                    after_tool_call=self._config.after_tool_call,
+                    tool_execution=self._config.tool_execution,
+                )
+            ) as loop_events:
+                async for event in loop_events:
+                    await self._notify(event)
+                    yield event
         finally:
             if signal.is_cancelled():
                 self._append_interrupted_tool_results()

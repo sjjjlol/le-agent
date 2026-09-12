@@ -3763,6 +3763,20 @@ class LeAgentTuiApp(App[None]):
 
         command = self.session.handle_command(text)
         if command.handled:
+            if command.debugger_requested:
+                if self._is_agent_or_queue_active():
+                    self._notify(
+                        "Finish or cancel the current run before opening /debug.",
+                        severity="warning",
+                    )
+                    return
+                from le_agent_coding.debugger.tui import DebuggerScreen
+
+                self.push_screen(
+                    DebuggerScreen(self.session, command.debugger_instruction),
+                    callback=self._accept_debugger_handoff,
+                )
+                return
             if command.clear_requested:
                 self.state.clear()
             if command.reload_requested:
@@ -3863,6 +3877,16 @@ class LeAgentTuiApp(App[None]):
         if not text.strip():
             return
         self._prompt_history = (*self._prompt_history, text)
+
+    def _accept_debugger_handoff(self, session: CodingSession | None) -> None:
+        if session is None:
+            return
+        self.session = session
+        self._connect_extension_runtime(session)
+        self.state.clear()
+        self.state.set_skills(session.skills)
+        self._load_session_messages_from_session()
+        self._refresh()
 
     def _load_session_messages_from_session(self) -> None:
         """Load visible session messages and reseed prompt history from them."""

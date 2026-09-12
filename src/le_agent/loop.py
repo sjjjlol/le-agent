@@ -36,7 +36,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from le_agent.events import (
@@ -123,7 +123,7 @@ async def run_agent_loop(
     before_tool_call: BeforeToolCall | None = None,
     after_tool_call: AfterToolCall | None = None,
     tool_execution: ToolExecutionMode = "parallel",
-) -> AsyncIterator[AgentEvent]:
+) -> AsyncGenerator[AgentEvent, None]:
     """运行 Provider/工具循环，产生 Pi 兼容的 Agent 事件。
 
     这是 LeAgent 的核心引擎——纯函数式 Agent 循环。它不持有状态，所有状态通过参数传入，
@@ -366,7 +366,7 @@ async def _assistant_events(
     messages: list[AgentMessage],
     tools: list[AgentTool],
     signal: CancellationToken | None,
-) -> AsyncIterator[AgentEvent]:
+) -> AsyncGenerator[AgentEvent, None]:
     source: AsyncIterator[AssistantMessageEvent] = provider.stream_response(
         model=model,
         system=system,
@@ -421,7 +421,7 @@ async def _execute_tool_calls(
     after_tool_call: AfterToolCall | None,
     *,
     tool_execution: ToolExecutionMode,
-) -> AsyncIterator[AgentEvent]:
+) -> AsyncGenerator[AgentEvent, None]:
     run_in_parallel = tool_execution == "parallel" and all(
         tool is None or tool.execution_mode == "parallel"
         for call in calls
@@ -514,7 +514,7 @@ async def _stream_tool_workers(
     signal: CancellationToken | None,
     after_tool_call: AfterToolCall | None,
     outcomes: list[ToolResultMessage | None],
-) -> AsyncIterator[AgentEvent]:
+) -> AsyncGenerator[AgentEvent, None]:
     queue: asyncio.Queue[AgentEvent | _WorkerDone | _WorkerFailed] = asyncio.Queue()
     tasks = [
         asyncio.create_task(_run_tool_worker(index, prepared, signal, after_tool_call, queue))

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 from le_agent.messages import AgentMessage, ToolResultMessage
 from le_agent.tools import AgentTool, AgentToolResult
 from le_agent.types import JSONValue
+from le_agent_coding.debugger.extensions import RestorableExtensionFactory
 
 if TYPE_CHECKING:
     from textual import events
@@ -863,6 +864,11 @@ class ExtensionAPI:
         """Return read-only session context."""
         self._generation.assert_active()
         return self._context
+
+    def register_debugger_factory(self, factory: RestorableExtensionFactory) -> None:
+        """Opt into workspace rebinding and versioned checkpoint state recovery."""
+        self._generation.assert_active()
+        self._runtime.debugger_factories[self._extension_name] = factory
 
     def register_tool(self, tool: AgentTool) -> None:
         """Register an agent tool (first registration per name wins)."""

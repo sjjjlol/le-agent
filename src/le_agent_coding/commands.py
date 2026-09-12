@@ -92,6 +92,8 @@ class CommandResult:
     """Result of handling a coding-session slash command."""
 
     handled: bool
+    debugger_requested: bool = False
+    debugger_instruction: str = ""
     exit_requested: bool = False
     clear_requested: bool = False
     reload_requested: bool = False
@@ -204,6 +206,18 @@ class CommandRegistry:
 def create_default_command_registry() -> CommandRegistry:
     """Create LeAgent's built-in slash command registry."""
     registry = CommandRegistry()
+    registry.register(
+        SlashCommand(
+            name="debug",
+            usage="/debug [task instruction]",
+            description="Open the checkpoint debugger (interactive TUI).",
+            handler=lambda context: CommandResult(
+                handled=True,
+                debugger_requested=True,
+                debugger_instruction=context.args,
+            ),
+        )
+    )
     registry.register(
         SlashCommand(
             name="quit",

@@ -19,12 +19,20 @@
 from __future__ import annotations
 
 import string
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import aclosing
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from le_agent.events import AgentEndEvent, MessageEndEvent, ToolExecutionEndEvent
+from le_agent.events import (
+    AgentEndEvent,
+    AgentEvent,
+    MessageEndEvent,
+    ToolExecutionEndEvent,
+    TurnEndEvent,
+    TurnStartEvent,
+)
 from le_agent.harness import AgentHarness, AgentHarnessConfig, QueuedMessages
 from le_agent.messages import (
     AgentMessage,
@@ -254,6 +262,7 @@ class CodingSessionConfig:
     extensions_enabled: bool = True
     project_extensions_enabled: bool = False
     extension_runtime: ExtensionRuntime | None = None
+    execution_barrier: Callable[[CodingSession, AgentEvent], Awaitable[None]] | None = None
 
 
 # CodingSession 不是第二个 Agent Loop：它包围 Harness，增加 coding 应用所需的
@@ -479,6 +488,67 @@ class CodingSession:
             # before initializing extensions for the same reason).
             session._session_start_pending = True
         return session
+
+    @property
+    def model_provider(self) -> ModelProvider:
+        """Return the effective provider without persisting credentials."""
+        return self._harness.config.provider
+
+    def subscribe_agent_events(
+        self, listener: Callable[[AgentEvent], Awaitable[None] | None]
+    ) -> Callable[[], None]:
+        """Subscribe an application host to the current harness."""
+        return self._harness.subscribe(listener)
+
+    async def detach_debug_storage(self, destination: Path | None = None) -> None:
+        """Durably hand off the full active transcript before removing debugger guarantees."""
+        from uuid import uuid4
+
+        destination = destination or (
+            Path.home() / ".le-agent/sessions/debug-detached" / f"{uuid4().hex}.jsonl"
+        )
+        from le_agent_coding.debugger.storage import DebugSessionStorage
+
+        if destination.exists():
+            raise ValueError("Detach destination must be a new journal")
+        storage = DebugSessionStorage(destination)
+        info = SessionInfoEntry(cwd=str(self.cwd))
+        await storage.append(info)
+        parent = info.id
+        for message in self._harness.messages:
+            entry = MessageEntry(parent_id=parent, message=message)
+            await storage.append(entry)
+            parent = entry.id
+        await storage.append(LeafEntry(parent_id=parent, entry_id=parent))
+        self._config = replace(self._config, storage=storage, session_manager=None, session_id=None)
+        self._pending_initial_entries = ()
+        self._last_parent_id = parent
+        await self._refresh_persisted_state(leaf_id=parent)
+
+    @property
+    def runtime_config(self) -> CodingSessionConfig:
+        """Application configuration for explicitly hosted execution (not serialization)."""
+        return self._config
+
+    async def append_idle_message(self, text: str) -> None:
+        """Prepare a durable user message without starting a model request."""
+        if self.is_running:
+            raise RuntimeError("Cannot append idle input while running")
+        count = len(self._harness.messages)
+        self._harness.replace_messages((*self._harness.messages, UserMessage(content=text)))
+        await self._persist_messages_since(count)
+
+    def configure_execution_barrier(
+        self, barrier: Callable[[CodingSession, AgentEvent], Awaitable[None]] | None
+    ) -> None:
+        """Change host boundary handling without replacing the current harness."""
+        self._config = replace(self._config, execution_barrier=barrier)
+
+    def configure_runtime_limits(self, max_turns: int | None) -> None:
+        """Set a host-owned run limit before starting a new generator."""
+        if self.is_running:
+            raise RuntimeError("Cannot change limits during a run")
+        self._harness.config.max_turns = max_turns
 
     @property
     def cwd(self) -> Path:
@@ -1800,7 +1870,7 @@ class CodingSession:
         source: Literal["interactive", "extension"] = "interactive",
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
-    ) -> AsyncIterator[CodingSessionEvent]:
+    ) -> AsyncGenerator[CodingSessionEvent, None]:
         """追加用户提示词，运行 Agent，并持久化新消息。
 
         这是核心交互方法，协调前端输入到 Agent 输出的完整流程。
@@ -1894,37 +1964,45 @@ class CodingSession:
             # 从这里开始由 Harness 驱动真正的模型—工具循环；本方法只包围它做应用编排。
             events = self._harness.prompt_message(prompt_message)
             self._invalidate_context_usage_cache()
-            async for event in events:
-                auto_name_message: str | None = None
-                if isinstance(event, MessageEndEvent):
-                    # 最终消息一旦确认就增量落盘，不必等整次 run 结束。
-                    persisted_count = await self._persist_messages_since(persisted_count)
-                    if not auto_name_attempted and isinstance(event.message, UserMessage):
-                        auto_name_attempted = True
-                        auto_name_message = event.message.text
-                if isinstance(event, ToolExecutionEndEvent):
-                    self._invalidate_context_usage_cache()
-                if (
-                    isinstance(event, MessageEndEvent)
-                    and isinstance(event.message, AssistantMessage)
-                    and event.message.stop_reason == "error"
-                ):
-                    self._last_diagnostic_log_path = self._diagnostic_logger.log_assistant_error(
-                        context=context,
-                        phase="agent_loop",
-                        message=event.message,
-                    )
-                    if is_context_overflow_error(event.message):
-                        overflow_message = event.message
-                if isinstance(event, AgentEndEvent):
-                    # Harness 已结束，但应用层可能还要压缩、重试或处理队列，不能提前 settled。
-                    yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
-                else:
-                    yield event
-                # Let frontends render the confirmed, expanded prompt before
-                # session naming performs its separate provider request.
-                if auto_name_message is not None:
-                    await self._try_auto_name_session(auto_name_message, context=context)
+            async with aclosing(events) as boundary_events:
+                async for event in boundary_events:
+                    auto_name_message: str | None = None
+                    if isinstance(event, MessageEndEvent):
+                        # 最终消息一旦确认就增量落盘，不必等整次 run 结束。
+                        persisted_count = await self._persist_messages_since(persisted_count)
+                        if not auto_name_attempted and isinstance(event.message, UserMessage):
+                            auto_name_attempted = True
+                            auto_name_message = event.message.text
+                    if isinstance(event, ToolExecutionEndEvent):
+                        self._invalidate_context_usage_cache()
+                    if (
+                        isinstance(event, MessageEndEvent)
+                        and isinstance(event.message, AssistantMessage)
+                        and event.message.stop_reason == "error"
+                    ):
+                        self._last_diagnostic_log_path = (
+                            self._diagnostic_logger.log_assistant_error(
+                                context=context,
+                                phase="agent_loop",
+                                message=event.message,
+                            )
+                        )
+                        if is_context_overflow_error(event.message):
+                            overflow_message = event.message
+                    if self._config.execution_barrier is not None and isinstance(
+                        event, (TurnStartEvent, TurnEndEvent)
+                    ):
+                        persisted_count = await self._persist_messages_since(persisted_count)
+                        await self._config.execution_barrier(self, event)
+                    if isinstance(event, AgentEndEvent):
+                        # Harness 已结束，但应用层可能还要压缩、重试或处理队列，不能提前 settled。
+                        yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
+                    else:
+                        yield event
+                    # Let frontends render the confirmed, expanded prompt before
+                    # session naming performs its separate provider request.
+                    if auto_name_message is not None:
+                        await self._try_auto_name_session(auto_name_message, context=context)
             persisted_count = await self._persist_messages_since(persisted_count)
             if overflow_message is not None:
                 session_event_1 = CompactionStartEvent(reason="overflow")
@@ -1952,32 +2030,40 @@ class CodingSession:
                     retry_persisted_count = len(self._harness.messages)
                     retry_events = self._harness.continue_()
                     self._invalidate_context_usage_cache()
-                    async for retry_event in retry_events:
-                        if isinstance(retry_event, MessageEndEvent):
-                            retry_persisted_count = await self._persist_messages_since(
-                                retry_persisted_count
-                            )
-                        if isinstance(retry_event, ToolExecutionEndEvent):
-                            self._invalidate_context_usage_cache()
-                        if (
-                            isinstance(retry_event, MessageEndEvent)
-                            and isinstance(retry_event.message, AssistantMessage)
-                            and retry_event.message.stop_reason == "error"
-                        ):
-                            self._last_diagnostic_log_path = (
-                                self._diagnostic_logger.log_assistant_error(
-                                    context=context,
-                                    phase="agent_loop_retry",
-                                    message=retry_event.message,
+                    async with aclosing(retry_events) as boundary_events:
+                        async for retry_event in boundary_events:
+                            if isinstance(retry_event, MessageEndEvent):
+                                retry_persisted_count = await self._persist_messages_since(
+                                    retry_persisted_count
                                 )
-                            )
-                        if isinstance(retry_event, AgentEndEvent):
-                            yield SessionAgentEndEvent(
-                                messages=retry_event.messages,
-                                will_retry=False,
-                            )
-                        else:
-                            yield retry_event
+                            if isinstance(retry_event, ToolExecutionEndEvent):
+                                self._invalidate_context_usage_cache()
+                            if (
+                                isinstance(retry_event, MessageEndEvent)
+                                and isinstance(retry_event.message, AssistantMessage)
+                                and retry_event.message.stop_reason == "error"
+                            ):
+                                self._last_diagnostic_log_path = (
+                                    self._diagnostic_logger.log_assistant_error(
+                                        context=context,
+                                        phase="agent_loop_retry",
+                                        message=retry_event.message,
+                                    )
+                                )
+                            if self._config.execution_barrier is not None and isinstance(
+                                retry_event, (TurnStartEvent, TurnEndEvent)
+                            ):
+                                retry_persisted_count = await self._persist_messages_since(
+                                    retry_persisted_count
+                                )
+                                await self._config.execution_barrier(self, retry_event)
+                            if isinstance(retry_event, AgentEndEvent):
+                                yield SessionAgentEndEvent(
+                                    messages=retry_event.messages,
+                                    will_retry=False,
+                                )
+                            else:
+                                yield retry_event
                     await self._persist_messages_since(retry_persisted_count)
                     session_event_4 = AutoRetryEndEvent(success=True, attempt=1, final_error=None)
                     await self._extension_runtime.emit_event(session_event_4)
@@ -1999,7 +2085,7 @@ class CodingSession:
             )
             raise
 
-    async def continue_(self) -> AsyncIterator[CodingSessionEvent]:
+    async def continue_(self) -> AsyncGenerator[CodingSessionEvent, None]:
         """从恢复状态继续运行 Agent，并持久化新消息。
 
         使用场景：
@@ -2022,25 +2108,33 @@ class CodingSession:
         try:
             events = self._harness.continue_()
             self._invalidate_context_usage_cache()
-            async for event in events:
-                if isinstance(event, MessageEndEvent):
-                    persisted_count = await self._persist_messages_since(persisted_count)
-                if isinstance(event, ToolExecutionEndEvent):
-                    self._invalidate_context_usage_cache()
-                if (
-                    isinstance(event, MessageEndEvent)
-                    and isinstance(event.message, AssistantMessage)
-                    and event.message.stop_reason == "error"
-                ):
-                    self._last_diagnostic_log_path = self._diagnostic_logger.log_assistant_error(
-                        context=context,
-                        phase="agent_loop",
-                        message=event.message,
-                    )
-                if isinstance(event, AgentEndEvent):
-                    yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
-                else:
-                    yield event
+            async with aclosing(events) as boundary_events:
+                async for event in boundary_events:
+                    if isinstance(event, MessageEndEvent):
+                        persisted_count = await self._persist_messages_since(persisted_count)
+                    if isinstance(event, ToolExecutionEndEvent):
+                        self._invalidate_context_usage_cache()
+                    if (
+                        isinstance(event, MessageEndEvent)
+                        and isinstance(event.message, AssistantMessage)
+                        and event.message.stop_reason == "error"
+                    ):
+                        self._last_diagnostic_log_path = (
+                            self._diagnostic_logger.log_assistant_error(
+                                context=context,
+                                phase="agent_loop",
+                                message=event.message,
+                            )
+                        )
+                    if self._config.execution_barrier is not None and isinstance(
+                        event, (TurnStartEvent, TurnEndEvent)
+                    ):
+                        persisted_count = await self._persist_messages_since(persisted_count)
+                        await self._config.execution_barrier(self, event)
+                    if isinstance(event, AgentEndEvent):
+                        yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
+                    else:
+                        yield event
             await self._persist_messages_since(persisted_count)
             await self._try_auto_compact(context=context, phase="auto_compact_after_continue")
             session_event_5 = AgentSettledEvent()

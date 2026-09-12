@@ -27,6 +27,7 @@ from le_agent_coding.commands import (
     SlashCommand,
     create_default_command_registry,
 )
+from le_agent_coding.debugger.extensions import RestorableExtensionFactory
 from le_agent_coding.extensions.api import (
     AGENT_EVENT_TYPES,
     AGENT_EVENT_WILDCARD,
@@ -154,6 +155,7 @@ class ExtensionRuntime:
 
     def __init__(self, *, ui: UiBridge | None = None) -> None:
         self._extensions: list[RegisteredExtension] = []
+        self.debugger_factories: dict[str, RestorableExtensionFactory] = {}
         self._tools: dict[str, RegisteredExtensionTool] = {}
         self._commands: dict[str, ExtensionCommand] = {}
         self._prompt_guidelines: list[tuple[str, str]] = []
@@ -210,6 +212,7 @@ class ExtensionRuntime:
             self._harness_unsubscribe()
             self._harness_unsubscribe = None
         self._extensions.clear()
+        self.debugger_factories.clear()
         self._tools.clear()
         self._commands.clear()
         self._prompt_guidelines.clear()
@@ -239,6 +242,7 @@ class ExtensionRuntime:
             )
 
     def _remove_registrations(self, extension_name: str) -> None:
+        self.debugger_factories.pop(extension_name, None)
         self._tools = {
             name: registration
             for name, registration in self._tools.items()
@@ -261,6 +265,12 @@ class ExtensionRuntime:
         }
 
     # -- registration (called through ExtensionAPI) -------------------------
+
+    def install_restored(self, name: str, setup: Callable[..., object], cwd: Path) -> None:
+        """Install an already reconstructed extension before session activation."""
+        self._setup_extension(LoadedExtension(name=name, path=cwd, setup=setup))
+        if name not in self.extension_names:
+            raise RuntimeError(f"Restored extension setup failed: {name}")
 
     def register_tool(self, extension_name: str, tool: AgentTool) -> None:
         """Register an extension tool; first registration per name wins."""
